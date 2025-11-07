@@ -28,7 +28,7 @@ Simulates scanning probe microscopy (SPM) images
     python PyAtoms_GUI.py
     ```
 ## Known issues
-
+06-Nov-2025: PyAtoms is currently **not** compatible with PyQt 6. Still compatible with latest PyQt5 (5.15.11)
 28-Oct-2024: No known issues. Works correctly with latest version of Matplotlib (3.9.2)
 
 ### For windows users:
