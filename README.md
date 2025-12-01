@@ -1,7 +1,7 @@
 # PyAtoms
 
 
-Simulates scanning probe microscopy (SPM) images
+Simulates scanning probe microscopy (SPM) images. Please read our preprint describing PyAtoms: <a href="https://arxiv.org/abs/2412.18332" target="__blank" rel="noopener noreferrer"> https://arxiv.org/abs/2412.18332. </a>
 
 (Formerly named: SPM Simulator, Atom Simulator)
 
@@ -16,7 +16,7 @@ Simulates scanning probe microscopy (SPM) images
 - SciPy
 - PyQt5 
 
-## Installation instructions - Mac OS and Windows. (Not tested on Linux systems)
+## Installation instructions - Mac OS and Windows.
 1. Download PyAtoms folder (via Code-> Download .zip)
 2. Open terminal (Mac OSX) or command line (Windows).
 3. Navigate to the directory where the PyAtoms folder is located. Example:
@@ -41,7 +41,7 @@ Simulates scanning probe microscopy (SPM) images
     ```
 - Alternatively, if you installed python, NumPy, SciPy, etc. through Anaconda for Windows, you can run the above code through the Anaconda prompt.
 
-For any other issues or crash reports, suggestions, contact asariprado@physics.ucla.edu or gutierrez@physics.ucla.edu
+For any other issues or crash reports, suggestions, contact gutierrez@physics.ucla.edu
 
 ##
 ## How to use 
