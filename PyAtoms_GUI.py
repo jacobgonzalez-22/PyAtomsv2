@@ -10,6 +10,8 @@ import time
 
 import numpy as numpy
 
+from pathlib import Path
+
 from matplotlib.gridspec import GridSpec
 import matplotlib.pyplot as plt
 
@@ -37,8 +39,8 @@ from moirelattice import moirelattice
 
 
 # main window
-# which inherits QDialog
-class Window(QDialog):
+# which inherits QMainWindow
+class Window(QMainWindow):
        
     # constructor - always include this
     def __init__(self, parent=None):
@@ -53,6 +55,10 @@ class Window(QDialog):
 
         # Call functions to initialize everything else
         self.setWindowTitle('PyAtoms v. 1.0') # Sets the title on the external window that pops up when you run the code
+
+        icon_path = Path(__file__).resolve().parent / "pyatoms.ico"
+        self.setWindowIcon(QIcon(str(icon_path))) # Sets the icon on the external window
+
         self.initGeo() # Sets size of the popup gui window
         self.initWidgetsGrid() # For placing multiple widgets in the popup gui in a grid layout
         self.show()
@@ -76,7 +82,7 @@ class Window(QDialog):
         self.w = (2*self.width()) // 3 - 100
         self.h = self.height() - 100
         self.SimWidget = SimulatorWidget(self, self.x,self.y,self.w,self.h) # Define an instance of the SimulatorWidget class, which is being imported thus can be accessed in this file
-        self.showMaximized() # To open the window fully maximized https://www.geeksforgeeks.org/pyqt5-how-to-open-window-in-maximized-format/
+        # self.showMaximized() # To open the window fully maximized https://www.geeksforgeeks.org/pyqt5-how-to-open-window-in-maximized-format/
 
 
     # Create a layout to place all the widgets/groupboxes in a grid layout
@@ -91,35 +97,51 @@ class Window(QDialog):
 
         # Settings for all lattices
         grid.addWidget(self.SimWidget.initMoireBtn(), 0, 1)
-        grid.addWidget(self.SimWidget.initColormapDropdown(),1,1)
+        grid.addWidget(self.SimWidget.initOutputTabs(), 1, 1)
         # grid.addWidget(self.SimWidget.initSpotifyButton(),9, 0, 1,1)
 
-        grid.addWidget(self.SimWidget.initImageParameters(), 0,2,2,1)
+        grid.addWidget(self.SimWidget.initImageParameters(), 0, 2, 2, 1)
 
-        
         grid.addWidget(self.SimWidget.initFiltering(), 0, 3)
-        grid.addWidget(self.SimWidget.initSaveButton(),1, 3)
+        grid.addWidget(self.SimWidget.initTimeEstimatorTabs(), 1, 3)
 
-        # Add calculator widgets
-        grid.addWidget(self.SimWidget.initCalcWidget(),0,4)
-        grid.addWidget(self.SimWidget.initMapCalcWidget(), 1, 4)
+        # Add moire calculator widget
+        grid.addWidget(self.SimWidget.initMoireCalcWidget(), 0, 4, 2, 1)
 
         # Settings for first lattice
-        grid.addWidget(self.SimWidget.initLattice1Parameters(), 0, 0, 3, 1)
+        # grid.addWidget(self.SimWidget.initLattice1Parameters(), 0, 0, 3, 1)
 
+        # # Settings for second lattice
+        # grid.addWidget(self.SimWidget.initLattice2Parameters(), 3, 0, 3, 1)
 
-        # Settings for second lattice
-        grid.addWidget(self.SimWidget.initLattice2Parameters(), 3, 0,3,1)
+        # # Lattice 3 parameters
+        # grid.addWidget(self.SimWidget.initLattice3Parameters(), 6, 0, 3, 1)
 
-        # Lattice 3 parameters
-        grid.addWidget(self.SimWidget.initLattice3Parameters(), 6, 0,3,1)
+        # settings for first lattice
+        lattice1Widget = self.SimWidget.initLattice1Parameters()
 
+        # settings for second lattice
+        lattice2Widget = self.SimWidget.initLattice2Parameters()
+
+        # settings for third lattice
+        lattice3Widget = self.SimWidget.initLattice3Parameters()
+
+        # make all three lattice panels the same height
+        latticeHeight = 280
+        lattice1Widget.setFixedHeight(latticeHeight)
+        lattice2Widget.setFixedHeight(latticeHeight)
+        lattice3Widget.setFixedHeight(latticeHeight)
+
+        grid.addWidget(lattice1Widget, 0, 0, 3, 1)
+        grid.addWidget(lattice2Widget, 3, 0, 3, 1)
+        grid.addWidget(lattice3Widget, 6, 0, 3, 1)
 
         # Add matplotlib fig/toolbar to gui
-        grid.addWidget(self.SimWidget.initMatplotlibFig(),2,1,8,5) # Make the matplotlib canvas/figure the largest widget
-        
-        
-        self.setLayout(grid)
+        grid.addWidget(self.SimWidget.initMatplotlibFig(), 2, 1, 8, 4) # Make the matplotlib canvas/figure the largest widget
+                
+        centralWidget = QWidget()
+        centralWidget.setLayout(grid)
+        self.setCentralWidget(centralWidget) # Set the central widget of the window to be the centralWidget that we just defined, which is a QWidget with a grid layout of all the other
         
 
     # Overriding keyPressEvent so that if the escape button is pressed, it doesn't automatically close the program
@@ -148,14 +170,20 @@ if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
     
 # To run, go to the file path location in terminal and type  'python PyAtoms_GUI.py'
 # driver code
-if __name__ == '__main__':  # this won't be run when imported... https://stackoverflow.com/questions/6523791/why-is-python-running-my-module-when-i-import-it-and-how-do-i-stop-it
+# if __name__ == '__main__':  # this won't be run when imported... https://stackoverflow.com/questions/6523791/why-is-python-running-my-module-when-i-import-it-and-how-do-i-stop-it
                             # # code here will only run when you invoke 'python main.py'
+
+def main():
     # creating apyqt5 application
     app = QApplication(sys.argv)
 
     # Create splash screen (loading screen) from https://gist.github.com/345161974/8897f9230006d51803c987122b3d4f17
     # splash_pix = QPixmap("HH.png")
-    splash_pix = QPixmap("logo_magma_Small.png")
+    # splash_pix = QPixmap("logo_magma_Small.png")
+
+    logo_path = Path(__file__).resolve().parent / "logo_magma_Small.png"
+    splash_pix = QPixmap(str(logo_path))
+    
     # splash_pix.scaledToHeight(240, Qt.SmoothTransformation)
     splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint) # WindowStaysOnTopHint: to keep it above all the other windows on the desktop.
     # splash.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint) # I commented this out and it fixed the issues of it reappearing after clicking away and back from hte gui
@@ -197,6 +225,9 @@ if __name__ == '__main__':  # this won't be run when imported... https://stackov
 
     # loop
     sys.exit(app.exec_())
+
+if __name__ == '__main__':
+    main()
 
     
     

@@ -9,6 +9,9 @@ import sys
 import os
 import webbrowser
 
+# safely parses tuple values from imported settings
+import ast 
+
 import numpy as np
 
 
@@ -30,6 +33,9 @@ from matplotlib.gridspec import GridSpec
 import matplotlib.pyplot as plt
 import matplotlib.image as mplimg
 
+from matplotlib.widgets import EllipseSelector
+from matplotlib.patches import Ellipse
+
 # PyQT imports for creating widgets/etc
 from PyQt5.QtWidgets import *#QApplication, QCheckBox, QFileDialog, QMessageBox, QWidget, QLabel, QButtonGroup, QPushButton, QSpinBox, QMenu, QComboBox, QMainWindow, QHBoxLayout, QVBoxLayout, QSlider, QGroupBox, QGridLayout, QRadioButton, QDialog, QLineEdit, QInputDialog, QToolTip
 from PyQt5.QtCore import *#Qt
@@ -43,10 +49,13 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 # NavigationToolbar2QT: It will provide the tool bar for the matplotlib figs (zooming in, panning, saving image, etc)
 # https://www.geeksforgeeks.org/how-to-embed-matplotlib-graph-in-pyqt5/
 
+from scipy.ndimage import gaussian_filter
 
-from hexatoms import hexatoms
-from squareatoms import squareatoms
-from moirelattice import moirelattice
+import traceback
+
+from hexatoms import hexatoms, evaluateHexLatticeAtCoords
+from squareatoms import squareatoms, evaluateSquareLatticeAtCoords
+from moirelattice import moirelattice, calculateMoireWavelength, calculateMoireTwistAngle, calculateMoireLatticeConstant, calculateMixedMoireComponents
 
 # Unicode chart for greek letters: https://unicode.org/charts/PDF/U0370.pdf
 # type '\u[CODE]'. Example: for alpha, it says 03B1, so type '\u03b1'
@@ -90,6 +99,10 @@ class SimulatorWidget(QWidget):
 		self.f12 = 0
 		self.f22 = 0 
 
+		self.strain1_frame = 'Local lattice axes'
+		self.strain2_frame = 'Local lattice axes'
+		self.strain3_frame = 'Local lattice axes'
+
 		self.origin1 = "Hollow"
 		self.origin2 = "Hollow"
 		self.origin3 = "Hollow"
@@ -106,6 +119,32 @@ class SimulatorWidget(QWidget):
 		self.filter_bool = False
 		self.sigma = 0
 		self.sigma_real = self.sigma*self.L/(self.pix-1)
+
+		# settings for interactive 2d fft filtering
+		self.fft_filter_enabled = False
+		self.fft_filter_display = "Original"
+		self.fft_selections = []
+		self.fft_selector = None
+		self.fft_complex = None
+		self.real_space_plot = None
+
+		self.fft_active_selection = None
+
+		self.fft_filtered_image = None
+
+		# mask made from the selected FFT regions
+		self.fft_mask = None
+
+		# keep track of FFT slection patches currently drawn
+		self.fft_selection_patches = []
+
+		# settings for the mirrored FFT selection preview
+		self.fft_drag_start = None
+		self.fft_mirror_preview = None
+		self.fft_main_preview = None
+		self.fft_press_cid = None
+		self.fft_motion_cid = None
+		self.fft_release_cid = None
 
 		self.saveFileName = ''
 
@@ -124,7 +163,7 @@ class SimulatorWidget(QWidget):
 
 		self.figure =plt.figure(figsize=(10,10))
 		
-		self.Z, self.fftZ = hexatoms(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.alpha1, self.beta1, self.origin1, self.center)
+		self.Z, self.fftZ = hexatoms(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.alpha1, self.beta1, self.origin1, self.center, self.strain1_frame)
 		
 		
 
@@ -147,8 +186,360 @@ class SimulatorWidget(QWidget):
 
 		self.harry_counter = 0 
 
+		# drift simulation defaults
+		self.drift_bool = False
+		self.drift_velocity = (0.0, 0.0)
+		self.fast_scan_direction = "Horizontal"
+
+	def initDriftParameters(self):
+		"""
+		creates GUI controls for the STM drift simulation
+
+		simulates what the STM would display if the sample drifts relative to the tip
+		"""
+
+		groupBox = QWidget(self)
+		groupBox.setToolTip(
+			"Simulate the raw image an STM would record if the sample drifts relative to the lab."
+		)
+
+		# main vertical layout for this box
+		vlayout = QVBoxLayout()
+		vlayout.setContentsMargins(10, 10, 10, 10)
+		vlayout.setSpacing(8)
+
+		# checkbox
+		self.drift_checkbox = QCheckBox("Show raw drifted image")
+		self.drift_checkbox.setChecked(self.drift_bool)
+		self.drift_checkbox.setToolTip(
+			"If checked, the real-space image is sampled as if the sample drifted during the scan."
+		)
+		self.drift_checkbox.stateChanged.connect(self.updateDriftSettings)
+		vlayout.addWidget(self.drift_checkbox)
+
+		# drift velocity input
+		self.drift_velocity_label = QLabel("Sample drift velocity:")
+		self.drift_velocity_label.setToolTip(
+			"Sample drift velocity relative to the tip as vx, vy in nm/s."
+		)
+
+		# acceptable
+		# 0.01, 0
+		# (0.01, 0)
+		# -0.02, 0.015
+		self.drift_velocity_input = QLineEdit(self)
+		self.drift_velocity_input.setPlaceholderText(str(self.drift_velocity))
+		self.drift_velocity_input.setFixedWidth(95)
+		self.drift_velocity_input.setToolTip(
+			"Input sample drift velocity as vx, vy in nm/s. Example: 0.01, -0.02"
+		)
+
+		self.drift_velocity_input.returnPressed.connect(self.updateDriftSettings)
+
+		self.drift_velocity_units = QLabel("nm/s", self)
+		self.drift_velocity_units.setMinimumWidth(35)
+
+		self.drift_velocity_btn = QPushButton("Go", self)
+		self.drift_velocity_btn.clicked.connect(self.updateDriftSettings)
+		self.drift_velocity_btn.setAutoDefault(False)
+
+		hbox_velocity = QHBoxLayout()
+		hbox_velocity.addWidget(self.drift_velocity_label)
+		hbox_velocity.addWidget(self.drift_velocity_input)
+		hbox_velocity.addWidget(self.drift_velocity_units)
+		hbox_velocity.addWidget(self.drift_velocity_btn)
+
+		vlayout.addLayout(hbox_velocity)
+
+		self.fast_scan_label = QLabel("Fast scan:")
+		self.fast_scan_label.setToolTip(
+			"Choose whether the saved forward scan is horizontal or vertical."
+		)
+
+		self.fast_scan_dropdown = QComboBox(self)
+		self.fast_scan_dropdown.addItems(["Horizontal", "Vertical"])
+		self.fast_scan_dropdown.setCurrentText(self.fast_scan_direction)
+		 
+		self.fast_scan_dropdown.activated[str].connect(self.updateDriftSettings)
+		
+		hbox_fast = QHBoxLayout()
+		hbox_fast.addWidget(self.fast_scan_label)
+		hbox_fast.addWidget(self.fast_scan_dropdown)
+
+		vlayout.addLayout(hbox_fast)
+
+		groupBox.setLayout(vlayout)
+
+		return groupBox
+
+	def updateDriftSettings(self):
+		"""
+		reads the drift GUI inputs and redraw the image.
+
+		stores:
+		- whether raw drift simulation is enabled
+		- sample drift velocity vector (vx, vy)
+		- horizontal or vertical fast scan
+		"""
+
+		try:
+			# check whether the drift checkbox is turned on
+			self.drift_bool = self.drift_checkbox.isChecked()
+
+			# only update the velocity if the input box is not empty.
+			if self.drift_velocity_input.text().strip() != "":
+
+				velocity_text = self.drift_velocity_input.text().strip()
+
+				# allow either:
+				# 0.01, -0.02
+				# or:
+				# (0.01, -0.02)
+				velocity_text = velocity_text.replace("(", "")
+				velocity_text = velocity_text.replace(")", "")
+
+				# split into vx and vy
+				velocity_parts = velocity_text.split(",")
+
+				# must be exactly two values!
+				if len(velocity_parts) != 2:
+					raise ValueError("Drift velocity must have exactly two comma-separated values.")
+
+				# convert both values to floats
+				vx = float(velocity_parts[0].strip())
+				vy = float(velocity_parts[1].strip())
+
+				self.drift_velocity = (vx, vy)
+
+				# update the placeholder
+				self.drift_velocity_input.setPlaceholderText(str(self.drift_velocity))
+
+			# read the fast scan direction
+			self.fast_scan_direction = self.fast_scan_dropdown.currentText()
+
+			# redraw the image
+			self.plotAtoms()
+
+			self.harry_counter += 1
+			self.updateHarryCounter()
+
+		except ValueError:
+			# this is specifically for bad velocity input
+			self.drift_error = QMessageBox()
+			self.drift_error.setWindowTitle("Error")
+			self.drift_error.setText(
+				"Type a valid drift velocity pair, e.g. 0.01, -0.02."
+			)
+			self.drift_error.setInformativeText(
+				"Your input for drift velocity is: " + str(self.drift_velocity_input.text())
+			)
+			self.drift_error.setIcon(QMessageBox.Warning)
+			self.drift_error.setStandardButtons(QMessageBox.Retry)
+			x = self.drift_error.exec()
+
+		except Exception:
+			# catches the REAL crash and shows the traceback instead of quitting
+			self.drift_error = QMessageBox()
+			self.drift_error.setWindowTitle("Drift simulation error")
+			self.drift_error.setText("Something went wrong while applying drift.")
+			self.drift_error.setInformativeText(traceback.format_exc())
+			self.drift_error.setIcon(QMessageBox.Critical)
+			self.drift_error.setStandardButtons(QMessageBox.Retry)
+			x = self.drift_error.exec()
+
+	
+	def evaluateLayerAtCoords(self, X, Y, lattice_type, a, theta, e11, e12, e22, alpha, beta, origin, strain_frame = "Local lattice axes"):
+		"""
+		evaluate one layer (hex or square) at coords x and y
+		"""
+
+		if lattice_type == 'Hexagonal':
+			return evaluateHexLatticeAtCoords(X, Y, a, theta, e11, e12, e22, alpha, beta, origin, self.center, strain_frame)
+
+		elif lattice_type == 'Square':
+			return evaluateSquareLatticeAtCoords(X, Y, a, theta, e11, e12, e22, self.center, strain_frame)
+
+		else:
+			return np.zeros_like(X)
+		
+	def evaluateCurrentStructureAtCoords(self, X, Y):
+		"""
+		evaluate the currently selected structure directly at x, y
+		
+		uses same logic as moirelattice
+		"""
+
+		theta_im = self.theta_im
+		theta_tw12 = self.theta_tw + theta_im
+		theta_tw23 = self.theta_tw2 + self.theta_tw + theta_im
+
+		# layer 1
+		Z1 = self.evaluateLayerAtCoords(
+			X, Y,
+			self.lattice1,
+			self.a,
+			theta_im,
+			self.e11, self.e12, self.e22,
+			self.alpha1, self.beta1,
+			self.origin1,
+			self.strain1_frame
+		)
+
+		
+		if self.moireBtn == 'Single':
+			return Z1
+
+
+		Z2 = self.evaluateLayerAtCoords(
+			X, Y,
+			self.lattice2,
+			self.b,
+			theta_tw12,
+			self.d11, self.d12, self.d22,
+			self.alpha2, self.beta2,
+			self.origin2,
+			self.strain2_frame
+		)
+
+		if self.moireBtn == 'Bilayer':
+
+			if self.modeBtn == 'Simple':
+				eta = self.eta
+
+				if eta < 0.0:
+					eta = 0.0
+				elif eta > 1.0:
+					eta = 1.0
+
+				Z = (eta * Z1 * Z2) + (1 - eta) * (Z1 + Z2)
+
+			elif self.modeBtn == 'Log':
+				xi = self.xi
+
+				if xi < 0.0:
+					xi = 0.0
+				elif xi > 10.0:
+					xi = 10.0
+
+				Z = np.log(1e-6 + Z1 + Z2*np.exp(-xi))
+
+			else:
+				Z = Z1
+
+			if self.filter_bool == True:
+				Z = gaussian_filter(Z, self.sigma, mode='mirror')
+
+			return mat2gray(Z)
+
+
+		Z3 = self.evaluateLayerAtCoords(
+			X, Y,
+			self.lattice3,
+			self.c,
+			theta_tw23,
+			self.f11, self.f12, self.f22,
+			self.alpha3, self.beta3,
+			self.origin3,
+			self.strain3_frame
+		)
+
+		if self.moireBtn == 'Trilayer':
+
+			if self.modeBtn == 'Simple':
+				eta = self.eta
+
+				if eta < 0.0:
+					eta = 0.0
+				elif eta > 1.0:
+					eta = 1.0
+
+				Z = (eta * Z1 * Z2 * Z3) + (1 - eta) * (Z1 + Z2 + Z3)
+
+			elif self.modeBtn == 'Log':
+				xi = self.xi
+
+				if xi < 0.0:
+					xi = 0.0
+				elif xi > 10.0:
+					xi = 10.0
+
+				Z = np.log(1e-6 + Z1 + Z2*np.exp(-xi) + Z3*np.exp(-2*xi))
+
+			else:
+				Z = Z1
+
+			if self.filter_bool == True:
+				Z = gaussian_filter(Z, self.sigma, mode='mirror')
+
+			return mat2gray(Z)
+
+		return Z1
+		
+
+
+
+
+
+	def applyRawDrift(self, Z_ideal):
+		"""
+		create the drifted STM image
+
+		stm controller thinks it is scanning a normal square raster grid
+		but if the sample drifts relative to the tip during the scan, each pixel
+		actually samples a slightly shifted point on the sample
+		"""
+		if self.drift_bool == False:
+			return Z_ideal
+
+		pix = int(self.pix)
+
+		L = float(self.L)
+
+		vs = float(self.vt)
+
+		if vs == 0:
+			return Z_ideal
+		
+		dx = L / (pix - 1)
+		dy = L / (pix - 1)
+
+		# define pixel (0, 0) to be bottom left
+		rows, cols = np.indices((pix, pix))
+
+		X_scan = -L/2 + cols * dx
+		Y_scan = -L/2 + rows * dy
+
+		if self.fast_scan_direction == "Horizontal":
+			t_acq = rows * (2 * L / vs) + cols * (dx / vs)
+
+		elif self.fast_scan_direction == "Vertical":
+			t_acq = cols * (2 * L / vs) + rows * (dy / vs)
+
+		else:
+			# for safety fallback use horizontal
+			t_acq = rows * (2 * L / vs) + cols * (dx / vs)
+
+		vx = float(self.drift_velocity[0])
+		vy = float(self.drift_velocity[1])
+
+		X_sample = X_scan - vx * t_acq
+		Y_sample = Y_scan - vy * t_acq
+
+		Z_raw = self.evaluateCurrentStructureAtCoords(X_sample, Y_sample)
+
+		return Z_raw
+
 	def initImageParameters(self):
 		groupBox = QGroupBox("Image parameters")
+
+		self.image_tabs = QTabWidget(self)
+
+		self.image_tab = QWidget(self)
+		self.drift_tab = QWidget(self)
+
+		self.image_tabs.addTab(self.image_tab, "Basic")
+		self.image_tabs.addTab(self.drift_tab, "Drift")
+
 		vlayout = QVBoxLayout(self)
 
 		# Pixels
@@ -279,7 +670,18 @@ class SimulatorWidget(QWidget):
 		vlayout.addLayout(hbox4)
 		vlayout.setSpacing(3) # To reduce the spacing (vertical?) between the widgets. saves so much space
 
-		groupBox.setLayout(vlayout)
+		self.image_tab.setLayout(vlayout)
+
+		drift_layout = QVBoxLayout(self)
+		drift_layout.addWidget(self.initDriftParameters())
+		self.drift_tab.setLayout(drift_layout)
+
+		main_layout = QVBoxLayout(self)
+		main_layout.setContentsMargins(4, 4, 4, 4)
+
+		main_layout.addWidget(self.image_tabs)
+
+		groupBox.setLayout(main_layout)
 
 		return groupBox
 
@@ -524,6 +926,8 @@ class SimulatorWidget(QWidget):
 			elif radio_btn.text() == "Trilayer":
 				self.moireBtn = "Trilayer"
 			# Update the plot every time user changes the button choice
+
+			self.updateMoireCalcLayerVisibility()
 		try:
 			self.plotAtoms() 
 			self.harry_counter += 0.5 # because for radio buttons, it runs the code twice for some reason. so add a TOTAL of 1 each time the user changes the radio btn 
@@ -557,6 +961,66 @@ class SimulatorWidget(QWidget):
 			self.mode_btn_error.setIcon(QMessageBox.Warning)
 			self.mode_btn_error.setStandardButtons(QMessageBox.Retry)
 			x = self.mode_btn_error.exec()
+
+	def initTimeEstimatorTabs(self):
+		"""
+		combine both time estimators into one tabbed widget
+		
+		the group-box title changes with the selected tab!
+		"""
+
+		groupBox = QGroupBox("SPM image time estimator")
+
+		layout = QVBoxLayout()
+		layout.setContentsMargins(4, 4, 4, 4)
+		layout.setSpacing(2)
+
+		self.time_estimator_tabs = QTabWidget()
+		self.time_estimator_tabs.setContentsMargins(0, 0, 0, 0)
+
+		topography_widget = self.initCalcWidget()
+		map_widget = self.initMapCalcWidget()
+
+		# remove each nested estimator's border and title spacing
+		topography_widget.setTitle("")
+		topography_widget.setStyleSheet(
+			"QGroupBox { border: none; margin-top: 0px; }"
+		)
+
+		map_widget.setTitle("")
+		map_widget.setStyleSheet(
+			"QGroupBox { border: none; margin-top: 0px; }"
+		)
+
+		self.time_estimator_tabs.addTab(
+			topography_widget,
+			"Topography"
+		)
+
+		self.time_estimator_tabs.addTab(
+			map_widget,
+			"Spectroscopy map"
+		)
+
+		def updateEstimatorTitle(index):
+			if index == 0:
+				groupBox.setTitle("SPM image time estimator")
+			else:
+				groupBox.setTitle("Spectroscopy map time estimator")
+
+		# Update the outer group-box title whenever the selected tab changes.
+		# QTabWidget.currentChanged provides the new tab index, and
+		# QGroupBox.setTitle changes the displayed group-box title:
+		# https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QTabWidget.html
+		# https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QGroupBox.html
+		self.time_estimator_tabs.currentChanged.connect(
+			updateEstimatorTitle
+		)
+
+		layout.addWidget(self.time_estimator_tabs)
+		groupBox.setLayout(layout)
+
+		return groupBox
 
 	def initCalcWidget(self):
 		groupBox = QGroupBox("SPM image time estimator")
@@ -714,6 +1178,842 @@ class SimulatorWidget(QWidget):
 
 		return groupBox
 
+	def initMoireCalcWidget(self):
+		"""
+		Create the moire calculator with separate tabs for
+		forward and inverse calculations.
+		"""
+
+		groupBox = QGroupBox("Moiré calculator")
+		groupBox.setToolTip("Calculate properties of a moiré pattern")
+
+		main_layout = QVBoxLayout()
+		self.moire_calc_tabs = QTabWidget()
+
+		# -------------------------
+		# Forward calculation tab
+		# -------------------------
+		forward_widget = QWidget()
+		forward_layout = QGridLayout()
+
+		# Create labels for layers 1 and 2.
+		lattice1_label = QLabel("Layer 1 lattice constant:")
+		lattice2_label = QLabel("Layer 2 lattice constant:")
+		twist12_label = QLabel("Relative twist angle θ₁₂:")
+
+		# Store the wavelength label and unit so mixed pairs can hide them.
+		self.moire12_label = QLabel("Moiré wavelength λ₁₂:")
+		self.moire12_unit = QLabel("nm")
+
+		# Create labels used only in trilayer mode.
+		self.moire_lattice3_label = QLabel("Layer 3 lattice constant:")
+		self.moire_twist23_label = QLabel("Relative twist angle θ₂₃:")
+		self.moire23_label = QLabel("Moiré wavelength λ₂₃:")
+		self.moire_twist13_label = QLabel("Relative twist angle θ₁₃:")
+		self.moire13_label = QLabel("Moiré wavelength λ₁₃:")
+
+		# Create the forward-calculator display boxes.
+		self.moire_lattice1_display = QLineEdit()
+		self.moire_lattice2_display = QLineEdit()
+		self.moire_twist12_display = QLineEdit()
+		self.moire_wavelength12_display = QLineEdit()
+
+		self.moire_lattice3_display = QLineEdit()
+		self.moire_twist23_display = QLineEdit()
+		self.moire_wavelength23_display = QLineEdit()
+		self.moire_twist13_display = QLineEdit()
+		self.moire_wavelength13_display = QLineEdit()
+
+		# Display the current layer values.
+		self.moire_lattice1_display.setText(str(self.a))
+		self.moire_lattice2_display.setText(str(self.b))
+		self.moire_twist12_display.setText(str(self.theta_tw))
+
+		self.moire_lattice3_display.setText(str(self.c))
+		self.moire_twist23_display.setText(str(self.theta_tw2))
+
+		# Calculate the initial layer 1-2 wavelength.
+		wavelength12 = calculateMoireWavelength(self.a, self.b, self.theta_tw)
+
+		if np.isinf(wavelength12):
+			self.moire_wavelength12_display.setText("∞")
+		else:
+			self.moire_wavelength12_display.setText(f"{wavelength12:.3f}")
+
+		# Calculate the initial layer 2-3 wavelength.
+		wavelength23 = calculateMoireWavelength(self.b, self.c, self.theta_tw2)
+
+		if np.isinf(wavelength23):
+			self.moire_wavelength23_display.setText("∞")
+		else:
+			self.moire_wavelength23_display.setText(f"{wavelength23:.3f}")
+
+		# Calculate the initial layer 1-3 angle and wavelength.
+		theta13 = self.theta_tw + self.theta_tw2
+		self.moire_twist13_display.setText(f"{theta13:.3f}")
+
+		wavelength13 = calculateMoireWavelength(self.a, self.c, theta13)
+
+		if np.isinf(wavelength13):
+			self.moire_wavelength13_display.setText("∞")
+		else:
+			self.moire_wavelength13_display.setText(f"{wavelength13:.3f}")
+
+		# Make all forward-calculator boxes read-only.
+		self.moire_lattice1_display.setReadOnly(True)
+		self.moire_lattice2_display.setReadOnly(True)
+		self.moire_twist12_display.setReadOnly(True)
+		self.moire_wavelength12_display.setReadOnly(True)
+
+		self.moire_lattice3_display.setReadOnly(True)
+		self.moire_twist23_display.setReadOnly(True)
+		self.moire_wavelength23_display.setReadOnly(True)
+		self.moire_twist13_display.setReadOnly(True)
+		self.moire_wavelength13_display.setReadOnly(True)
+
+		# Keep the display boxes compact.
+		self.moire_lattice1_display.setFixedWidth(70)
+		self.moire_lattice2_display.setFixedWidth(70)
+		self.moire_twist12_display.setFixedWidth(70)
+		self.moire_wavelength12_display.setFixedWidth(70)
+
+		self.moire_lattice3_display.setFixedWidth(70)
+		self.moire_twist23_display.setFixedWidth(70)
+		self.moire_wavelength23_display.setFixedWidth(70)
+		self.moire_twist13_display.setFixedWidth(70)
+		self.moire_wavelength13_display.setFixedWidth(70)
+
+		# Create unit labels.
+		lattice1_unit = QLabel("nm")
+		lattice2_unit = QLabel("nm")
+		twist12_unit = QLabel("°")
+
+		self.moire_lattice3_unit = QLabel("nm")
+		self.moire_twist23_unit = QLabel("°")
+		self.moire23_unit = QLabel("nm")
+		self.moire_twist13_unit = QLabel("°")
+		self.moire13_unit = QLabel("nm")
+
+		# Add the layer 1-2 rows.
+		forward_layout.addWidget(lattice1_label, 0, 0)
+		forward_layout.addWidget(self.moire_lattice1_display, 0, 1)
+		forward_layout.addWidget(lattice1_unit, 0, 2)
+
+		forward_layout.addWidget(lattice2_label, 1, 0)
+		forward_layout.addWidget(self.moire_lattice2_display, 1, 1)
+		forward_layout.addWidget(lattice2_unit, 1, 2)
+
+		forward_layout.addWidget(twist12_label, 2, 0)
+		forward_layout.addWidget(self.moire_twist12_display, 2, 1)
+		forward_layout.addWidget(twist12_unit, 2, 2)
+
+		forward_layout.addWidget(self.moire12_label, 3, 0)
+		forward_layout.addWidget(self.moire_wavelength12_display, 3, 1)
+		forward_layout.addWidget(self.moire12_unit, 3, 2)
+
+		# Add the trilayer rows.
+		forward_layout.addWidget(self.moire_lattice3_label, 4, 0)
+		forward_layout.addWidget(self.moire_lattice3_display, 4, 1)
+		forward_layout.addWidget(self.moire_lattice3_unit, 4, 2)
+
+		forward_layout.addWidget(self.moire_twist23_label, 5, 0)
+		forward_layout.addWidget(self.moire_twist23_display, 5, 1)
+		forward_layout.addWidget(self.moire_twist23_unit, 5, 2)
+
+		forward_layout.addWidget(self.moire23_label, 6, 0)
+		forward_layout.addWidget(self.moire_wavelength23_display, 6, 1)
+		forward_layout.addWidget(self.moire23_unit, 6, 2)
+
+		forward_layout.addWidget(self.moire_twist13_label, 7, 0)
+		forward_layout.addWidget(self.moire_twist13_display, 7, 1)
+		forward_layout.addWidget(self.moire_twist13_unit, 7, 2)
+
+		forward_layout.addWidget(self.moire13_label, 8, 0)
+		forward_layout.addWidget(self.moire_wavelength13_display, 8, 1)
+		forward_layout.addWidget(self.moire13_unit, 8, 2)
+
+		# Display the longest mixed square-hexagonal components.
+		self.mixed_moire_components_label = QLabel()
+		self.mixed_moire_components_label.setWordWrap(True)
+		self.mixed_moire_components_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+		self.mixed_moire_components_label.hide()
+
+		forward_layout.addWidget(self.mixed_moire_components_label, 9, 0, 1, 3)
+
+		forward_widget.setLayout(forward_layout)
+
+		# -------------------------
+		# Inverse calculation tab
+		# -------------------------
+		inverse_widget = QWidget()
+		inverse_layout = QGridLayout()
+
+		# Choose which layer pair the calculation uses.
+		inverse_pair_label = QLabel("Layer pair:")
+
+		self.inverse_pair_selector = QComboBox()
+		self.inverse_pair_selector.addItems(["Layers 1–2", "Layers 2–3", "Layers 1–3"])
+		self.inverse_pair_selector.currentIndexChanged.connect(self.updateInverseMoirePair)
+
+		# Create labels.
+		self.inverse_lattice1_label = QLabel("Layer 1 lattice constant:")
+		self.inverse_lattice2_label = QLabel("Layer 2 lattice constant:")
+		self.inverse_twist12_label = QLabel("Relative twist angle θ₁₂:")
+		self.inverse_moire12_label = QLabel("Moiré wavelength λ₁₂:")
+
+		# Create editable input boxes.
+		self.inverse_lattice1_input = QLineEdit()
+		self.inverse_lattice2_input = QLineEdit()
+		self.inverse_twist12_input = QLineEdit()
+		self.inverse_moire12_input = QLineEdit()
+
+		# Pressing Enter in any input runs the calculation.
+		self.inverse_lattice1_input.returnPressed.connect(self.findMissingMoireValue)
+		self.inverse_lattice2_input.returnPressed.connect(self.findMissingMoireValue)
+		self.inverse_twist12_input.returnPressed.connect(self.findMissingMoireValue)
+		self.inverse_moire12_input.returnPressed.connect(self.findMissingMoireValue)
+
+		# Keep the boxes compact.
+		self.inverse_lattice1_input.setFixedWidth(70)
+		self.inverse_lattice2_input.setFixedWidth(70)
+		self.inverse_twist12_input.setFixedWidth(70)
+		self.inverse_moire12_input.setFixedWidth(70)
+
+		# Show that one field should be left empty.
+		self.inverse_lattice1_input.setPlaceholderText("blank")
+		self.inverse_lattice2_input.setPlaceholderText("blank")
+		self.inverse_twist12_input.setPlaceholderText("blank")
+		self.inverse_moire12_input.setPlaceholderText("blank")
+
+		# Create unit labels.
+		inverse_lattice1_unit = QLabel("nm")
+		inverse_lattice2_unit = QLabel("nm")
+		inverse_twist12_unit = QLabel("°")
+		inverse_moire12_unit = QLabel("nm")
+
+		# Store the last unambiguous result.
+		self.moire_result_name = None
+		self.moire_result_value = None
+
+		# Create the calculation buttons.
+		self.inverse_calculate_button = QPushButton("Calculate missing value")
+		self.inverse_calculate_button.clicked.connect(self.findMissingMoireValue)
+
+		self.inverse_apply_button = QPushButton("Apply result")
+		self.inverse_apply_button.setEnabled(False)
+		self.inverse_apply_button.clicked.connect(self.applyMoireResult)
+
+		# Create the status and explanation labels.
+		self.inverse_status_label = QLabel("Enter three values and leave one blank.")
+		self.inverse_status_label.setWordWrap(True)
+
+		inverse_note = QLabel("Apply result to copy completed values to the main lattice settings.")
+		inverse_note.setWordWrap(True)
+
+		# Add the layer-pair selector.
+		inverse_layout.addWidget(inverse_pair_label, 0, 0)
+		inverse_layout.addWidget(self.inverse_pair_selector, 0, 1, 1, 2)
+
+		# Add the inverse-calculator input rows.
+		inverse_layout.addWidget(self.inverse_lattice1_label, 1, 0)
+		inverse_layout.addWidget(self.inverse_lattice1_input, 1, 1)
+		inverse_layout.addWidget(inverse_lattice1_unit, 1, 2)
+
+		inverse_layout.addWidget(self.inverse_lattice2_label, 2, 0)
+		inverse_layout.addWidget(self.inverse_lattice2_input, 2, 1)
+		inverse_layout.addWidget(inverse_lattice2_unit, 2, 2)
+
+		inverse_layout.addWidget(self.inverse_twist12_label, 3, 0)
+		inverse_layout.addWidget(self.inverse_twist12_input, 3, 1)
+		inverse_layout.addWidget(inverse_twist12_unit, 3, 2)
+
+		inverse_layout.addWidget(self.inverse_moire12_label, 4, 0)
+		inverse_layout.addWidget(self.inverse_moire12_input, 4, 1)
+		inverse_layout.addWidget(inverse_moire12_unit, 4, 2)
+
+		# Add the buttons and messages.
+		inverse_layout.addWidget(self.inverse_calculate_button, 5, 0, 1, 3)
+		inverse_layout.addWidget(self.inverse_apply_button, 6, 0, 1, 3)
+		inverse_layout.addWidget(self.inverse_status_label, 7, 0, 1, 3)
+		inverse_layout.addWidget(inverse_note, 8, 0, 1, 3)
+
+		inverse_widget.setLayout(inverse_layout)
+
+		# Add both pages to the tab widget.
+		self.moire_calc_tabs.addTab(forward_widget, "Calculate wavelength")
+		self.moire_calc_tabs.addTab(inverse_widget, "Solve missing value")
+
+		main_layout.addWidget(self.moire_calc_tabs)
+		groupBox.setLayout(main_layout)
+
+		# Load the initial inverse-calculator pair.
+		self.updateInverseMoirePair()
+
+		# Set the initial row visibility and forward results.
+		self.updateMoireCalcLayerVisibility()
+		self.updateMoireCalcDisplays()
+
+		return groupBox
+
+	def updateInverseMoirePair(self):
+		"""
+		Update the inverse calculator for the selected layer pair.
+		"""
+
+		selected_pair = self.inverse_pair_selector.currentText()
+
+		# Clear any old calculated result.
+		self.moire_result_name = None
+		self.moire_result_value = None
+		self.inverse_apply_button.setEnabled(False)
+
+		if selected_pair == "Layers 1–2":
+			first_layer = 1
+			second_layer = 2
+
+			first_lattice = self.a
+			second_lattice = self.b
+			twist_angle = self.theta_tw
+
+		elif selected_pair == "Layers 2–3":
+			first_layer = 2
+			second_layer = 3
+
+			first_lattice = self.b
+			second_lattice = self.c
+			twist_angle = self.theta_tw2
+
+		elif selected_pair == "Layers 1–3":
+			first_layer = 1
+			second_layer = 3
+
+			first_lattice = self.a
+			second_lattice = self.c
+			twist_angle = self.theta_tw + self.theta_tw2
+
+		else:
+			return
+
+		# Update the labels for the selected pair.
+		self.inverse_lattice1_label.setText(
+			f"Layer {first_layer} lattice constant:"
+		)
+
+		self.inverse_lattice2_label.setText(
+			f"Layer {second_layer} lattice constant:"
+		)
+
+		self.inverse_twist12_label.setText(
+			f"Relative twist angle θ<sub>{first_layer}{second_layer}<sub>:"
+		)
+
+		self.inverse_moire12_label.setText(
+			f"Moiré wavelength λ<sub>{first_layer}{second_layer}<sub>:"
+		)
+
+		# Load the current values from the main lattice settings.
+		self.inverse_lattice1_input.setText(
+			f"{first_lattice:.3f}"
+		)
+
+		self.inverse_lattice2_input.setText(
+			f"{second_lattice:.3f}"
+		)
+
+		self.inverse_twist12_input.setText(
+			f"{twist_angle:.3f}"
+		)
+
+		# Calculate and display the current wavelength.
+		wavelength = calculateMoireWavelength(
+			first_lattice,
+			second_lattice,
+			twist_angle
+		)
+
+		if np.isinf(wavelength):
+			self.inverse_moire12_input.setText("∞")
+		else:
+			self.inverse_moire12_input.setText(
+				f"{wavelength:.3f}"
+			)
+
+		self.inverse_status_label.setText(
+			"Leave one field blank to solve for it."
+		)
+
+	def updateMoireCalcDisplays(self):
+		"""
+		Update the forward moire calculator using the current
+		lattice constants, lattice types, and relative angles.
+		"""
+
+		# Stop if the calculator has not been created yet.
+		if not hasattr(self, "moire_lattice1_display"):
+			return
+
+		# Update the displayed layer values.
+		self.moire_lattice1_display.setText(str(self.a))
+		self.moire_lattice2_display.setText(str(self.b))
+		self.moire_twist12_display.setText(str(self.theta_tw))
+
+		self.moire_lattice3_display.setText(str(self.c))
+		self.moire_twist23_display.setText(str(self.theta_tw2))
+
+		# Determine which pairs have different lattice symmetries.
+		pair12_mixed = self.lattice1 != self.lattice2
+		pair23_mixed = self.lattice2 != self.lattice3
+		pair13_mixed = self.lattice1 != self.lattice3
+
+		trilayer_visible = self.trilayer.isChecked()
+
+		# Calculate the layer 1-2 scalar wavelength.
+		wavelength12 = calculateMoireWavelength(self.a, self.b, self.theta_tw)
+
+		# Hide the ordinary scalar result for mixed lattice types.
+		self.moire12_label.setVisible(not pair12_mixed)
+		self.moire_wavelength12_display.setVisible(not pair12_mixed)
+		self.moire12_unit.setVisible(not pair12_mixed)
+
+		if not pair12_mixed:
+			if np.isinf(wavelength12):
+				self.moire_wavelength12_display.setText("∞")
+			else:
+				self.moire_wavelength12_display.setText(f"{wavelength12:.3f}")
+
+		# Calculate the layer 2-3 scalar wavelength.
+		wavelength23 = calculateMoireWavelength(self.b, self.c, self.theta_tw2)
+
+		# These rows should appear only for a same-symmetry trilayer pair.
+		show_wavelength23 = trilayer_visible and not pair23_mixed
+
+		self.moire23_label.setVisible(show_wavelength23)
+		self.moire_wavelength23_display.setVisible(show_wavelength23)
+		self.moire23_unit.setVisible(show_wavelength23)
+
+		if not pair23_mixed:
+			if np.isinf(wavelength23):
+				self.moire_wavelength23_display.setText("∞")
+			else:
+				self.moire_wavelength23_display.setText(f"{wavelength23:.3f}")
+
+		# Layer 1-3 uses the sum of the two consecutive twist angles.
+		theta13 = self.theta_tw + self.theta_tw2
+		self.moire_twist13_display.setText(f"{theta13:.3f}")
+
+		# Calculate the layer 1-3 scalar wavelength.
+		wavelength13 = calculateMoireWavelength(self.a, self.c, theta13)
+
+		# These rows should appear only for a same-symmetry trilayer pair.
+		show_wavelength13 = trilayer_visible and not pair13_mixed
+
+		self.moire13_label.setVisible(show_wavelength13)
+		self.moire_wavelength13_display.setVisible(show_wavelength13)
+		self.moire13_unit.setVisible(show_wavelength13)
+
+		if not pair13_mixed:
+			if np.isinf(wavelength13):
+				self.moire_wavelength13_display.setText("∞")
+			else:
+				self.moire_wavelength13_display.setText(f"{wavelength13:.3f}")
+
+		# Collect mixed square-hexagonal results separately because
+		# one scalar wavelength does not fully describe a mixed pair.
+		mixed_results = []
+
+		def addMixedPairResults(pair_name, lattice_type1, lattice_type2, lattice_constant1, lattice_constant2, twist_angle):
+			"""
+			Add the longest first-shell components when the pair
+			contains one square and one hexagonal lattice.
+			"""
+
+			if lattice_type1 == lattice_type2:
+				return
+
+			components = calculateMixedMoireComponents(lattice_type1, lattice_type2, lattice_constant1, lattice_constant2, twist_angle, number_of_components=3)
+
+			component_lines = []
+
+			for index, component in enumerate(components, start=1):
+				display_fringe_angle = round(component["fringe_angle"], 1) % 180
+				component_lines.append(f"  {index}. λ = {component['wavelength']:.3f} nm, fringe direction = {display_fringe_angle:.1f}°")
+
+			mixed_results.append(f"Layers {pair_name} ({lattice_type1}–{lattice_type2}):\n" + "\n".join(component_lines))
+
+		# Always check layers 1-2 in bilayer or trilayer mode.
+		if self.moireBtn in ("Bilayer", "Trilayer"):
+			addMixedPairResults("1–2", self.lattice1, self.lattice2, self.a, self.b, self.theta_tw)
+
+		# Check the other two pairs only in trilayer mode.
+		if self.moireBtn == "Trilayer":
+			addMixedPairResults("2–3", self.lattice2, self.lattice3, self.b, self.c, self.theta_tw2)
+			addMixedPairResults("1–3", self.lattice1, self.lattice3, self.a, self.c, theta13)
+
+		# Show the mixed-component area only when needed.
+		if mixed_results:
+			self.mixed_moire_components_label.setText("Longest mixed-lattice components\n\n" + "\n\n".join(mixed_results))
+			self.mixed_moire_components_label.show()
+
+		else:
+			self.mixed_moire_components_label.clear()
+			self.mixed_moire_components_label.hide()
+
+	def updateMoireCalcLayerVisibility(self):
+		"""
+		Show layer 3 calculations only in trilayer mode and prevent
+		mixed pairs from displaying the misleading scalar wavelength.
+		"""
+
+		trilayer_visible = self.trilayer.isChecked()
+
+		# Only allow pair selection when all three layers are active.
+		if trilayer_visible:
+			self.inverse_pair_selector.setEnabled(True)
+		else:
+			self.inverse_pair_selector.setCurrentText("Layers 1–2")
+			self.inverse_pair_selector.setEnabled(False)
+
+		# Determine whether each pair mixes lattice symmetries.
+		pair12_mixed = self.lattice1 != self.lattice2
+		pair23_mixed = self.lattice2 != self.lattice3
+		pair13_mixed = self.lattice1 != self.lattice3
+
+		# The layer 1-2 scalar wavelength is hidden for a mixed pair.
+		self.moire12_label.setVisible(not pair12_mixed)
+		self.moire_wavelength12_display.setVisible(not pair12_mixed)
+		self.moire12_unit.setVisible(not pair12_mixed)
+
+		# Layer 3 and its angle are shown in trilayer mode.
+		self.moire_lattice3_label.setVisible(trilayer_visible)
+		self.moire_lattice3_display.setVisible(trilayer_visible)
+		self.moire_lattice3_unit.setVisible(trilayer_visible)
+
+		self.moire_twist23_label.setVisible(trilayer_visible)
+		self.moire_twist23_display.setVisible(trilayer_visible)
+		self.moire_twist23_unit.setVisible(trilayer_visible)
+
+		# The 2-3 wavelength is hidden when that pair is mixed.
+		self.moire23_label.setVisible(trilayer_visible and not pair23_mixed)
+		self.moire_wavelength23_display.setVisible(trilayer_visible and not pair23_mixed)
+		self.moire23_unit.setVisible(trilayer_visible and not pair23_mixed)
+
+		self.moire_twist13_label.setVisible(trilayer_visible)
+		self.moire_twist13_display.setVisible(trilayer_visible)
+		self.moire_twist13_unit.setVisible(trilayer_visible)
+
+		# The 1-3 wavelength is hidden when that pair is mixed.
+		self.moire13_label.setVisible(trilayer_visible and not pair13_mixed)
+		self.moire_wavelength13_display.setVisible(trilayer_visible and not pair13_mixed)
+		self.moire13_unit.setVisible(trilayer_visible and not pair13_mixed)
+
+		# Refresh the results after changing modes.
+		self.updateMoireCalcDisplays()
+
+	def findMissingMoireValue(self):
+		"""
+		Calculate the single missing inverse-calculator value.
+
+		Mathematical expressions such as "0.4 + 1" are accepted.
+		The result can only be applied to the main lattice settings
+		when it is unambiguous.
+		"""
+
+		# Clear any result left over from the previous calculation.
+		self.moire_result_name = None
+		self.moire_result_value = None
+		self.inverse_apply_button.setEnabled(False)
+
+		inputs = {
+			"Layer 1 lattice constant": self.inverse_lattice1_input.text().strip(),
+			"Layer 2 lattice constant": self.inverse_lattice2_input.text().strip(),
+			"Relative twist angle": self.inverse_twist12_input.text().strip(),
+			"Moiré wavelength": self.inverse_moire12_input.text().strip()
+		}
+
+		# Find every field that the user left empty.
+		missing_values = [
+			name for name, value in inputs.items()
+			if value == ""
+		]
+
+		# Exactly one value must be missing.
+		if len(missing_values) == 0:
+			self.inverse_status_label.setText("Leave one field blank.")
+			return
+
+		if len(missing_values) > 1:
+			self.inverse_status_label.setText("Enter three values.")
+			return
+
+		# Evaluate each completed field so expressions such as
+		# "0.4 + 1" are accepted.
+		values = {}
+
+		for name, text in inputs.items():
+			if text == "":
+				values[name] = None
+				continue
+
+			try:
+				value = eval(
+					text,
+					{"__builtins__": {}},
+					{}
+				)
+			except (
+				SyntaxError,
+				NameError,
+				TypeError,
+				ZeroDivisionError
+			):
+				self.inverse_status_label.setText(
+					f"{name} must be a valid number or expression."
+				)
+				return
+
+			# Reject strings, lists, complex numbers, booleans, etc.
+			if type(value) not in (int, float):
+				self.inverse_status_label.setText(
+					f"{name} must produce a real number."
+				)
+				return
+
+			values[name] = value
+
+		missing_value = missing_values[0]
+
+		# Calculate the moire wavelength.
+		if missing_value == "Moiré wavelength":
+			wavelength = calculateMoireWavelength(
+				values["Layer 1 lattice constant"],
+				values["Layer 2 lattice constant"],
+				values["Relative twist angle"]
+			)
+
+			if np.isinf(wavelength):
+				self.inverse_moire12_input.setText("∞")
+				self.inverse_status_label.setText("Infinite wavelength cannot be applied.")
+				return
+			
+			self.inverse_moire12_input.setText(f"{wavelength:.3f}")
+
+			# store the completed calculation so all pair values can be applied
+			self.moire_result_name = "Moiré wavelength"
+			self.moire_result_value = wavelength
+			self.inverse_apply_button.setEnabled(True)
+
+			# Wavelength is not one of the main image-generation inputs.
+			self.inverse_status_label.setText(
+				"Calculated moiré wavelength."
+			)
+			return
+
+		# Calculate the relative twist angle.
+		if missing_value == "Relative twist angle":
+			try:
+				twist_angle = calculateMoireTwistAngle(
+					values["Layer 1 lattice constant"],
+					values["Layer 2 lattice constant"],
+					values["Moiré wavelength"]
+				)
+			except ValueError as error:
+				self.inverse_status_label.setText(str(error))
+				return
+
+			self.inverse_twist12_input.setText(
+				f"{twist_angle:.3f}"
+			)
+
+			self.moire_result_name = "Relative twist angle"
+			self.moire_result_value = twist_angle
+			self.inverse_apply_button.setEnabled(True)
+
+			self.inverse_status_label.setText(
+				"Calculated twist-angle magnitude."
+			)
+			return
+
+		# Calculate the layer 1 lattice constant.
+		if missing_value == "Layer 1 lattice constant":
+			try:
+				solutions = calculateMoireLatticeConstant(
+					values["Layer 2 lattice constant"],
+					values["Relative twist angle"],
+					values["Moiré wavelength"]
+				)
+			except ValueError as error:
+				self.inverse_status_label.setText(str(error))
+				return
+
+			# Collapse solutions that are identical at the displayed precision.
+			display_solutions = []
+
+			for solution in solutions:
+				rounded_solution = round(solution, 3)
+
+				if rounded_solution not in display_solutions:
+					display_solutions.append(rounded_solution)
+
+			# Put one displayed solution into the blank field.
+			if len(display_solutions) == 1:
+				result = display_solutions[0]
+
+				self.inverse_lattice1_input.setText(
+					f"{result:.3f}"
+				)
+
+				self.moire_result_name = "Layer 1 lattice constant"
+				self.moire_result_value = result
+				self.inverse_apply_button.setEnabled(True)
+
+				self.inverse_status_label.setText(
+					"Calculated layer 1 lattice constant."
+				)
+
+			# Do not choose when two visibly different values are possible.
+			else:
+				formatted_solutions = " or ".join(
+					f"{solution:.3f} nm"
+					for solution in display_solutions
+				)
+
+				self.inverse_status_label.setText(
+					f"Possible layer 1 values: {formatted_solutions}"
+				)
+
+			return
+
+		# Calculate the layer 2 lattice constant.
+		if missing_value == "Layer 2 lattice constant":
+			try:
+				solutions = calculateMoireLatticeConstant(
+					values["Layer 1 lattice constant"],
+					values["Relative twist angle"],
+					values["Moiré wavelength"]
+				)
+			except ValueError as error:
+				self.inverse_status_label.setText(str(error))
+				return
+
+			# Collapse solutions that are identical at the displayed precision.
+			display_solutions = []
+
+			for solution in solutions:
+				rounded_solution = round(solution, 3)
+
+				if rounded_solution not in display_solutions:
+					display_solutions.append(rounded_solution)
+
+			# Put one displayed solution into the blank field.
+			if len(display_solutions) == 1:
+				result = display_solutions[0]
+
+				self.inverse_lattice2_input.setText(
+					f"{result:.3f}"
+				)
+
+				self.moire_result_name = "Layer 2 lattice constant"
+				self.moire_result_value = result
+				self.inverse_apply_button.setEnabled(True)
+
+				self.inverse_status_label.setText(
+					"Calculated layer 2 lattice constant."
+				)
+
+			# Do not choose when two visibly different values are possible.
+			else:
+				formatted_solutions = " or ".join(
+					f"{solution:.3f} nm"
+					for solution in display_solutions
+				)
+
+				self.inverse_status_label.setText(
+					f"Possible layer 2 values: {formatted_solutions}"
+				)
+
+			return
+
+
+	def applyMoireResult(self):
+		"""
+		Apply the completed inverse-calculator values to the
+		selected pair of main lattice settings.
+		"""
+
+		try:
+			first_lattice = float(
+				self.inverse_lattice1_input.text()
+			)
+
+			second_lattice = float(
+				self.inverse_lattice2_input.text()
+			)
+
+			twist_angle = float(
+				self.inverse_twist12_input.text()
+			)
+
+		except ValueError:
+			self.inverse_status_label.setText(
+				"All applicable fields must contain one numeric value."
+			)
+			return
+
+		selected_pair = self.inverse_pair_selector.currentText()
+
+		# Apply values to layers 1 and 2.
+		if selected_pair == "Layers 1–2":
+			self.a_input.setText(f"{first_lattice:.3f}")
+			self.b_input.setText(f"{second_lattice:.3f}")
+			self.thetatw_input.setText(f"{twist_angle:.3f}")
+
+			self.update_a()
+			self.update_b()
+			self.updateThetaTw()
+
+		# Apply values to layers 2 and 3.
+		elif selected_pair == "Layers 2–3":
+			self.b_input.setText(f"{first_lattice:.3f}")
+			self.c_input.setText(f"{second_lattice:.3f}")
+			self.thetatw2_input.setText(f"{twist_angle:.3f}")
+
+			self.update_b()
+			self.update_c()
+			self.updateThetaTw2()
+
+		# Apply values to layers 1 and 3.
+		elif selected_pair == "Layers 1–3":
+			# Keep theta12 unchanged and calculate the theta23
+			# needed to produce the requested theta13.
+			twist23 = twist_angle - self.theta_tw
+
+			self.a_input.setText(f"{first_lattice:.3f}")
+			self.c_input.setText(f"{second_lattice:.3f}")
+			self.thetatw2_input.setText(f"{twist23:.3f}")
+
+			self.update_a()
+			self.update_c()
+			self.updateThetaTw2()
+
+		else:
+			self.inverse_status_label.setText(
+				"Select a valid layer pair."
+			)
+			return
+
+		# Keep the beginnings of narrow fields visible.
+		self.a_input.setCursorPosition(0)
+		self.b_input.setCursorPosition(0)
+		self.c_input.setCursorPosition(0)
+		self.thetatw_input.setCursorPosition(0)
+		self.thetatw2_input.setCursorPosition(0)
+
+		self.inverse_status_label.setText(
+			f"Applied values to {selected_pair.lower()}."
+		)
+
+		self.inverse_apply_button.setEnabled(False)
+
 	def update_map_calc(self):
 		if (self.calc_map_btn).isChecked():
 			# Calculate the estimated time it will take to take a spectroscopy map 
@@ -849,6 +2149,17 @@ class SimulatorWidget(QWidget):
 
 		# # # # # # # # # # # # # # # # # # # # 
 		### Pick strain on lattice 1 ###
+
+		self.strain1_frame_label = QLabel("Reference framce:")
+		self.strain1_frame_dropdown = QComboBox(self)
+		self.strain1_frame_dropdown.addItems(["Local lattice axes", "Global image axes"])
+		self.strain1_frame_dropdown.setToolTip("Local: strain axes rotate with the lattice. Global: strain axes stay fixed to the image x/y axes.")
+		self.strain1_frame_dropdown.currentTextChanged.connect(self.update_strain1_frame)
+
+		strain1_frame_box = QHBoxLayout(self)
+		strain1_frame_box.addWidget(self.strain1_frame_label)
+		strain1_frame_box.addWidget(self.strain1_frame_dropdown)
+
 		self.strain1_label = QLabel("Strain (in percent, i.e. 3%)")
 
 		# e11 input
@@ -914,6 +2225,7 @@ class SimulatorWidget(QWidget):
 
 		# Put all the strain widgets into tab2 
 		self.tab2a.layout = QVBoxLayout(self)
+		self.tab2a.layout.addLayout(strain1_frame_box)
 		self.tab2a.layout.addWidget(self.strain1_label)
 		self.tab2a.layout.addLayout(h3box)
 		self.tab2a.layout.addLayout(h4box)
@@ -1180,6 +2492,16 @@ class SimulatorWidget(QWidget):
 
 		# # # # # # # # # # # # # # # # # # # # 
 		### Pick strain on lattice 2 ###
+		self.strain2_frame_label = QLabel("Reference framce:")
+		self.strain2_frame_dropdown = QComboBox(self)
+		self.strain2_frame_dropdown.addItems(["Local lattice axes", "Global image axes"])
+		self.strain2_frame_dropdown.setToolTip("Local: strain axes rotate with the lattice. Global: strain axes stay fixed to the image x/y axes.")
+		self.strain2_frame_dropdown.currentTextChanged.connect(self.update_strain2_frame)
+
+		strain2_frame_box = QHBoxLayout(self)
+		strain2_frame_box.addWidget(self.strain2_frame_label)
+		strain2_frame_box.addWidget(self.strain2_frame_dropdown)
+
 		self.strain2_label = QLabel("Strain (in percent, i.e. 3%)")
 
 		# d11 input
@@ -1252,6 +2574,7 @@ class SimulatorWidget(QWidget):
 
 		# Put all the strain widgets into tab2b 
 		self.tab2b.layout = QVBoxLayout(self)
+		self.tab2b.layout.addLayout(strain2_frame_box)
 		self.tab2b.layout.addWidget(self.strain2_label)
 		self.tab2b.layout.addLayout(h3box)
 		self.tab2b.layout.addLayout(h4box)
@@ -1508,6 +2831,17 @@ class SimulatorWidget(QWidget):
 
 		# # # # # # # # # # # # # # # # # # # # # 
 		### Pick strain on lattice 3 ###
+		self.strain3_frame_label = QLabel("Reference framce:")
+		self.strain3_frame_dropdown = QComboBox(self)
+		self.strain3_frame_dropdown.addItems(["Local lattice axes", "Global image axes"])
+		self.strain3_frame_dropdown.setToolTip("Local: strain axes rotate with the lattice. Global: strain axes stay fixed to the image x/y axes.")
+		self.strain3_frame_dropdown.currentTextChanged.connect(self.update_strain3_frame)
+
+		strain3_frame_box = QHBoxLayout(self)
+		strain3_frame_box.addWidget(self.strain3_frame_label)
+		strain3_frame_box.addWidget(self.strain3_frame_dropdown)
+
+
 		self.strain3_label = QLabel("Strain (in percent, i.e. 3%)")
 
 		# f11 input
@@ -1577,6 +2911,7 @@ class SimulatorWidget(QWidget):
 
 		# Put all the strain widgets into tab2b 
 		self.tab2c.layout = QVBoxLayout(self)
+		self.tab2c.layout.addLayout(strain3_frame_box)
 		self.tab2c.layout.addWidget(self.strain3_label)
 		self.tab2c.layout.addLayout(h3box)
 		self.tab2c.layout.addLayout(h4box)
@@ -1723,6 +3058,7 @@ class SimulatorWidget(QWidget):
 			elif radio_btn.text() == "Square":
 				self.lattice1 = "Square"
 		 # Will update lattice1 to "Hexagonal" or "Square" depending on which is clicked
+		self.updateMoireCalcDisplays()
 		self.plotAtoms()
 		self.harry_counter += 0.5 # because for radio buttons, it runs the code twice for some reason. so add a TOTAL of 1 each time the user changes the radio btn 
 		self.updateHarryCounter()
@@ -1736,6 +3072,7 @@ class SimulatorWidget(QWidget):
 			elif radio_btn.text() == "Square":
 				self.lattice2 = "Square"
 		 # Will update lattice2 to "Hexagonal" or "Square" depending on which is clicked
+		self.updateMoireCalcDisplays()
 		self.plotAtoms()
 		self.harry_counter += 0.5 # because for radio buttons, it runs the code twice for some reason. so add a TOTAL of 1 each time the user changes the radio btn 
 		self.updateHarryCounter()
@@ -1748,6 +3085,7 @@ class SimulatorWidget(QWidget):
 			elif radio_btn.text() == "Square":
 				self.lattice3 = "Square"
 		 # Will update lattice3 to "Hexagonal" or "Square" depending on which is clicked
+		self.updateMoireCalcDisplays()
 		self.plotAtoms()
 		self.harry_counter += 0.5 # because for radio buttons, it runs the code twice for some reason. so add a TOTAL of 1 each time the user changes the radio btn 
 		self.updateHarryCounter()
@@ -1758,7 +3096,8 @@ class SimulatorWidget(QWidget):
 			self.a = eval(self.a_input.text()) #float(self.a_input.text())
 			self.a_nm_Label.setText('nm') 
 			self.a_input.setPlaceholderText(str(self.a))
-			self.plotAtoms() 
+			self.updateMoireCalcDisplays()
+			self.plotAtoms()
 			self.harry_counter += 1
 			self.updateHarryCounter()
 		except:
@@ -1778,7 +3117,8 @@ class SimulatorWidget(QWidget):
 			self.b = eval(self.b_input.text())
 			self.b_nm_Label.setText('nm')
 			self.b_input.setPlaceholderText(str(self.b))
-			self.plotAtoms() 
+			self.updateMoireCalcDisplays()
+			self.plotAtoms()
 			self.harry_counter += 1
 			self.updateHarryCounter()
 		except:
@@ -1795,6 +3135,7 @@ class SimulatorWidget(QWidget):
 			self.c = eval(self.c_input.text())
 			self.c_nm_Label.setText('nm')
 			self.c_input.setPlaceholderText(str(self.c))
+			self.updateMoireCalcDisplays()
 			self.plotAtoms() 
 			self.harry_counter += 1
 			self.updateHarryCounter()
@@ -1812,7 +3153,8 @@ class SimulatorWidget(QWidget):
 			self.theta_tw = eval(self.thetatw_input.text())
 			self.thetatwLabel.adjustSize()
 			self.thetatw_input.setPlaceholderText(str(self.theta_tw))
-			self.plotAtoms() 
+			self.updateMoireCalcDisplays()
+			self.plotAtoms()
 			self.harry_counter += 1
 			self.updateHarryCounter()
 		except:
@@ -1829,6 +3171,7 @@ class SimulatorWidget(QWidget):
 			self.theta_tw2 = eval(self.thetatw2_input.text())
 			self.thetatwLabel.adjustSize()
 			self.thetatw2_input.setPlaceholderText(str(self.theta_tw2))
+			self.updateMoireCalcDisplays()
 			self.plotAtoms() 
 			self.harry_counter += 1
 			self.updateHarryCounter()
@@ -1840,6 +3183,49 @@ class SimulatorWidget(QWidget):
 			self.theta_tw2_error.setIcon(QMessageBox.Warning)
 			self.theta_tw2_error.setStandardButtons(QMessageBox.Retry)
 			x = self.theta_tw2_error.exec()
+
+
+	def _set_strain_label_frame(self, lattice_number, frame_text):
+		use_global = frame_text == "Global image axes"
+
+		if lattice_number == 1:
+			prefix = "g" if use_global else "e"
+			self.e11_label.setText(prefix + "<sub>11</sub>")
+			self.e12_label.setText(prefix + "<sub>12</sub>")
+			self.e22_label.setText(prefix + "<sub>22</sub>")
+
+		elif lattice_number == 2:
+			prefix = "g" if use_global else "d"
+			self.d11_label.setText(prefix + "<sub>11</sub>")
+			self.d12_label.setText(prefix + "<sub>12</sub>")
+			self.d22_label.setText(prefix + "<sub>22</sub>")
+
+		elif lattice_number == 3:
+			prefix = "g" if use_global else "f"
+			self.f11_label.setText(prefix + "<sub>11</sub>")
+			self.f12_label.setText(prefix + "<sub>12</sub>")
+			self.f22_label.setText(prefix + "<sub>22</sub>")
+
+	def update_strain1_frame(self, text):
+		self.strain1_frame = text
+		self._set_strain_label_frame(1, text)
+		self.plotAtoms()
+		self.harry_counter += 1
+		self.updateHarryCounter()
+
+	def update_strain2_frame(self, text):
+		self.strain2_frame = text
+		self._set_strain_label_frame(2, text)
+		self.plotAtoms()
+		self.harry_counter += 1
+		self.updateHarryCounter()
+
+	def update_strain3_frame(self, text):
+		self.strain3_frame = text
+		self._set_strain_label_frame(3, text)
+		self.plotAtoms()
+		self.harry_counter += 1
+		self.updateHarryCounter()
 
 	def update_e11(self):
 		try: 
@@ -2373,28 +3759,54 @@ class SimulatorWidget(QWidget):
 
 	# THIS IS THE ACTUAL PLOTTING FUNCTION
 	def plotAtoms(self):
+		# temporarily remove the FFT selector before rebulding the plot axes
+		fft_selection_was_enabled = self.fft_filter_enabled
+
+		if self.fft_selector is not None:
+			self.fft_selector.set_active(False)
+			self.fft_selector.disconnect_events()
+			self.fft_selector = None
+
 		# clearing old figure
 		self.figure.clear()
 
+		# reset FFT selection patches after rebuilding the figure
+		self.fft_selection_patches = []
+
 		# if moire btn is  NOT single (ie, bilayer or trilayer), then run the moirelattice code
 		if self.moireBtn != 'Single':
-			self.Z, self.fftZ = moirelattice(self.pix, self.L, self.a, self.b, self.c, self.moireBtn, self.modeBtn, self.lattice1, self.lattice2, self.lattice3, self.theta_im, self.theta_tw, self.theta_tw2, self.e11, self.e12, self.e22, self.d11, self.d12, self.d22, self.f11, self.f12, self.f22, self.alpha1, self.beta1, self.alpha2, self.beta2, self.alpha3, self.beta3, self.eta, self.xi, self.origin1, self.origin2, self.origin3, self.filter_bool, self.sigma, self.center)
+			self.Z, self.fftZ = moirelattice(self.pix, self.L, self.a, self.b, self.c, self.moireBtn, self.modeBtn, self.lattice1, self.lattice2, self.lattice3, self.theta_im, self.theta_tw, self.theta_tw2, self.e11, self.e12, self.e22, self.d11, self.d12, self.d22, self.f11, self.f12, self.f22, self.alpha1, self.beta1, self.alpha2, self.beta2, self.alpha3, self.beta3, self.eta, self.xi, self.origin1, self.origin2, self.origin3, self.filter_bool, self.sigma, self.center, self.strain1_frame, self.strain2_frame, self.strain3_frame)
 
 		# if moire btn is clicked no, only plot a single lattice using the lattice1 parameters. all lattice2 inputs are ignored
 		else: # if moirebtn is clicked to SINGLE layer, just run hexatoms/squareatoms, 
 			if self.lattice1 == 'Hexagonal':
-				self.Z, self.fftZ = hexatoms(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.alpha1, self.beta1, self.origin1, self.center)
+				self.Z, self.fftZ = hexatoms(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.alpha1, self.beta1, self.origin1, self.center, self.strain1_frame)
 			elif self.lattice1 == 'Square':
-				self.Z, self.fftZ = squareatoms(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.center)
+				self.Z, self.fftZ = squareatoms(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.center, self.strain1_frame)
 
 			# Normalize the FFTs to be between 0-1 (bc hexatoms only normalizes Z, moirelattice is what normalizes fftZ, but if you chose single lattice, moirelattice code isnt run. so need to normalize the FFT here)
 			self.fftZ = mat2gray(self.fftZ)
-	 
+
+		
+		self.Z_ideal = self.Z.copy()
+
+		self.Z = self.applyRawDrift(self.Z_ideal)
+
+		# keep the complex FFT for 2D FFT filtering
+		self.fft_complex = npf.fftshift(npf.fft2(self.Z - np.mean(np.mean(self.Z))))
+
+		if self.drift_bool == True:
+			self.fftZ = np.abs(self.fft_complex)
+			self.fftZ = mat2gray(self.fftZ)
 
 
 		# Create an axis for plotting - the matplotlib gridspec figure was defined in self.__init__ in the GUI app
-		ax00 = self.figure.add_subplot(self.grid[0,0])
-		ax01 = self.figure.add_subplot(self.grid[0,1])
+		# ax00 = self.figure.add_subplot(self.grid[0,0])
+		# ax01 = self.figure.add_subplot(self.grid[0,1])
+
+		# keep references to the real space and FFT axes for interactive tools
+		self.ax_real = self.figure.add_subplot(self.grid[0, 0])
+		self.ax_fft = self.figure.add_subplot(self.grid[0, 1])
 
 
 		# Fix to correct for issue with Matplotlib version 3.5.1 creating cartoonishly large fonts
@@ -2417,52 +3829,58 @@ class SimulatorWidget(QWidget):
 			plt.xticks(fontsize=5)
 			plt.yticks(fontsize=5)
 
-			ax00.tick_params(labelsize=5)
-			ax01.set_xlabel('$k_x$ (nm⁻¹)',fontsize=5)
-			ax01.set_ylabel('$k_y$ (nm⁻¹)',fontsize=5)
-			ax01.tick_params(labelsize=5)
-			ax01.xaxis.set_tick_params(width=0.5)
-			ax01.yaxis.set_tick_params(width=0.5)
+			self.ax_real.tick_params(labelsize=5)
+			self.ax_fft.set_xlabel('$k_x$ (nm⁻¹)',fontsize=5)
+			self.ax_fft.set_ylabel('$k_y$ (nm⁻¹)',fontsize=5)
+			self.ax_fft.tick_params(labelsize=5)
+			self.ax_fft.xaxis.set_tick_params(width=0.5)
+			self.ax_fft.yaxis.set_tick_params(width=0.5)
 
 			plt.tight_layout(pad=0.5,w_pad = 1,h_pad=1) # nothing workd :( 
 
 			for axis in ['top','bottom','left','right']:
-				ax00.spines[axis].set_linewidth(0.5)
-				ax01.spines[axis].set_linewidth(0.5)
+				self.ax_real.spines[axis].set_linewidth(0.5)
+				self.ax_fft.spines[axis].set_linewidth(0.5)
 
 
 
 		# Plot original image
 		# fig1 = ax00.imshow(self.Z, cmap = self.colormap_RS, extent=[0,self.L,0,self.L])
-		fig1 = ax00.imshow(self.Z, cmap = self.colormap_RS, extent=[-self.L/2,self.L/2,-self.L/2,self.L/2])
-		ax00.set_xticks([])
-		ax00.set_yticks([])
-		ax00.set_title('Real space image')
-		ax00.grid(False)
-		cb_r = plt.colorbar(fig1, ax=ax00, fraction=0.046, pad=0.04) # fixed colorbar issues, from: https://stackoverflow.com/questions/16702479/matplotlib-colorbar-placement-and-size
+
+		# choose which real space image to display
+		Z_display = self.getFFTFilteredImage()
+
+		self.real_space_plot = self.ax_real.imshow(Z_display, cmap = self.colormap_RS, extent=[-self.L/2,self.L/2,-self.L/2,self.L/2], origin = "lower")
+		self.ax_real.set_xticks([])
+		self.ax_real.set_yticks([])
+		self.ax_real.set_title('Real space image')
+		self.ax_real.grid(False)
+		cb_r = plt.colorbar(self.real_space_plot, ax=self.ax_real, fraction=0.046, pad=0.04) # fixed colorbar issues, from: https://stackoverflow.com/questions/16702479/matplotlib-colorbar-placement-and-size
 		cb_r.ax.tick_params(width=0.5)
 		# if Log mode is enabled for moire lattice, estimate best image range from histogram
 		if self.modeBtn == 'Log':
 			Zhist,bins = np.histogram(self.Z[:],self.pix//2,density=True)
 			self.c_min = bins[Zhist.searchsorted(0.2)]
-			fig1.set_clim(self.c_min,1.0)
+			self.real_space_plot.set_clim(self.c_min,1.0)
 		plt.tight_layout()
 
 		# Plot a circular with the radius of the half-width at half-max of a 2D gaussian of width w, HWHM = sqrt(2*log(2))*w
 		if self.filter_bool == True and self.sigma != 0:
 			self.sigma_real = self.sigma*self.L/(self.pix-1) # Convert pixels to real-space units
+			# square_size = self.L/4
+			# square = plt.Rectangle((-3*self.L/8 - square_size/2, -3*self.L/8 - square_size/2), square_size, square_size, fc = 'black', ec = 'white')
 			square = plt.Rectangle((-3*self.L/8 - 2*self.sigma_real,-3*self.L/8 - 2*self.sigma_real), 4*self.sigma_real, 4*self.sigma_real, fc='black',ec='white')
 			circ = plt.Circle((-3*self.L/8,-3*self.L/8),self.sigma_real*np.sqrt(2*np.log(2)),fill=True,color='white',alpha=0.5)
-			ax00.add_artist(square)
-			ax00.add_artist(circ)
+			self.ax_real.add_artist(square)
+			self.ax_real.add_artist(circ)
 
 		from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 		import matplotlib.font_manager as fm
 		# fontprops = fm.FontProperties(size=12)
-		scalebar_Z = AnchoredSizeBar(ax00.transData, np.ceil(self.L/10 *2)/2, str(np.ceil(self.L/10 *2)/2) + ' nm', 
+		scalebar_Z = AnchoredSizeBar(self.ax_real.transData, np.ceil(self.L/10 *2)/2, str(np.ceil(self.L/10 *2)/2) + ' nm', 
 					     'lower right', pad=0.5, sep=5, borderpad=0.5, frameon=True, color='black', label_top=True)
 
-		ax00.add_artist(scalebar_Z)
+		self.ax_real.add_artist(scalebar_Z)
 
 		# Plot FFT of original image
 		
@@ -2480,20 +3898,20 @@ class SimulatorWidget(QWidget):
 		# 	extR = (self.pix-1)*np.pi/self.L
 		
 
-		fig2 = ax01.imshow(self.fftZ, cmap = self.colormap_FFT, extent=[extL, extR, extL, extR],vmax = self.vmax_fft,origin='upper')		
-		ax01.set_xlabel('$k_x$ (nm⁻¹)')
-		ax01.set_ylabel('$k_y$ (nm⁻¹)', labelpad= -5)#20) 
-		ax01.set_title('FFT')
-		ax01.grid(False)
+		fig2 = self.ax_fft.imshow(self.fftZ, cmap = self.colormap_FFT, extent=[extL, extR, extL, extR],vmax = self.vmax_fft,origin='lower')		
+		self.ax_fft.set_xlabel('$k_x$ (nm⁻¹)')
+		self.ax_fft.set_ylabel('$k_y$ (nm⁻¹)', labelpad= -5)#20) 
+		self.ax_fft.set_title('FFT')
+		self.ax_fft.grid(False)
 
-		cb_k = plt.colorbar(fig2, ax=ax01, fraction=0.046, pad=0.04)
+		cb_k = plt.colorbar(fig2, ax=self.ax_fft, fraction=0.046, pad=0.04)
 		cb_k.ax.tick_params(width=0.5)
 		plt.tight_layout()
 
 		if self.filter_bool == True and self.sigma != 0:
 			sigma_k = 1/self.sigma_real # The width of gaussian in k-space
 			circ_k = plt.Circle((0,0),sigma_k*np.sqrt(2*np.log(2)),fill=False,color='red')
-			ax01.add_artist(circ_k)
+			self.ax_fft.add_artist(circ_k)
 		
 		# Fix to correct for issue with Matplotlib version 3.5.x creating large fonts, thick lines, etc
 		import matplotlib as mpl
@@ -2516,19 +3934,28 @@ class SimulatorWidget(QWidget):
 			# plt.rcParams['xtick.major.width'] = 0.5
 			plt.xticks(fontsize=5)
 			plt.yticks(fontsize=5)
-			ax01.set_xlabel('$k_x$ (nm⁻¹)',fontsize=5)
-			ax01.set_ylabel('$k_y$ (nm⁻¹)',fontsize=5)
-			ax01.tick_params(labelsize=5)
-			ax00.tick_params(labelsize=5)
-			ax01.xaxis.set_tick_params(width=0.5)
-			ax01.yaxis.set_tick_params(width=0.5)
+			self.ax_fft.set_xlabel('$k_x$ (nm⁻¹)',fontsize=5)
+			self.ax_fft.set_ylabel('$k_y$ (nm⁻¹)',fontsize=5)
+			self.ax_fft.tick_params(labelsize=5)
+			self.ax_real.tick_params(labelsize=5)
+			self.ax_fft.xaxis.set_tick_params(width=0.5)
+			self.ax_fft.yaxis.set_tick_params(width=0.5)
 			cb_r.ax.tick_params(width=0.5)
 			cb_k.ax.tick_params(width=0.5)
 			plt.tight_layout(pad=0.5,w_pad = 1,h_pad=1) # nothing workd :( 
 
 			for axis in ['top','bottom','left','right']:
-				ax00.spines[axis].set_linewidth(0.5)
-				ax01.spines[axis].set_linewidth(0.5)
+				self.ax_real.spines[axis].set_linewidth(0.5)
+				self.ax_fft.spines[axis].set_linewidth(0.5)
+
+
+		# redraw any stored FFT selections only while the 2D FFT filter tab is active
+		if self.filter_tabs.currentIndex() == 1 and len(self.fft_selections) > 0:
+			self.drawFFTSelections()
+
+		# recreate the FFT selector after the new axes are rebuilt
+		if fft_selection_was_enabled:
+			self.createFFTSelector()
 
 
 
@@ -2547,12 +3974,16 @@ class SimulatorWidget(QWidget):
 		self.saveLabel = QLabel("Input file name only\n(no extension)")
 		self.saveLabel.setWordWrap(True)
 		self.saveLabel.setMinimumHeight(35)
+
 		# Add QPushButton to open file directory whenever you want to save
 		self.save_btn = QPushButton("Click to save", self)
 		self.save_btn.clicked.connect(self.updateSaveButton)
 		self.save_btn.setAutoDefault(False) # This is so its not default on, you can press enter on other widgets and this window wont pop up
-		
 
+		self.import_btn = QPushButton("Import settings", self)
+		self.import_btn.clicked.connect(self.importSettings)
+		self.import_btn.setAutoDefault(False)
+		
 		
 
 
@@ -2560,12 +3991,387 @@ class SimulatorWidget(QWidget):
 		vlayout.addWidget(self.saveLabel)
 
 		vlayout.addWidget(self.save_btn)
+		vlayout.addWidget(self.import_btn)
 
 		# vlayout.setSpacing(2)
 		groupBox.setLayout(vlayout)
 
 
 		return groupBox
+
+	def initOutputTabs(self):
+		"""
+		Combine the save controls and colormap controls into
+		one tabbed output widget.
+		"""
+
+		groupBox = QGroupBox("Misc.")
+
+		layout = QVBoxLayout()
+		layout.setContentsMargins(4, 4, 4, 4)
+		layout.setSpacing(2)
+
+		self.output_tabs = QTabWidget()
+
+		# Build the two existing widgets.
+		save_widget = self.initSaveButton()
+		colormap_widget = self.initColormapDropdown()
+
+		# Remove the nested group-box titles and borders because
+		# the outer Output group box already provides them.
+		save_widget.setTitle("")
+		save_widget.setStyleSheet(
+			"QGroupBox { border: none; margin-top: 0px; }"
+		)
+
+		colormap_widget.setTitle("")
+		colormap_widget.setStyleSheet(
+			"QGroupBox { border: none; margin-top: 0px; }"
+		)
+
+		# Add the existing widgets as separate tabs.
+		self.output_tabs.addTab(
+			save_widget,
+			"Save files"
+		)
+
+		self.output_tabs.addTab(
+			colormap_widget,
+			"Colormap"
+		)
+
+		layout.addWidget(self.output_tabs)
+		groupBox.setLayout(layout)
+
+		return groupBox
+
+	def setImportedRadio(self, button):
+		button.blockSignals(True)
+		button.setChecked(True)
+		button.blockSignals(False)
+
+	def importSettings(self):
+		self.importFileName = QFileDialog.getOpenFileName(
+			self,
+			"Import PyAtoms settings",
+			os.getcwd(),
+			"PyAtoms parameter files (*_params.txt);;Text files (*.txt)"
+		)
+
+		if self.importFileName[0] == "":
+			return
+
+		try:
+			settings = {}
+			current_lattice = None
+
+			with open(self.importFileName[0], "r", encoding="utf-8-sig", errors="replace") as param_file:
+				for raw_line in param_file:
+					line = raw_line.strip()
+
+					if line == "" or line.startswith("-"):
+						continue
+
+					if line in ("Lattice 1:", "Lattice 2:", "Lattice 3:"):
+						current_lattice = line[:-1]
+						continue
+
+					if ": " in line:
+						key, value = line.split(": ", 1)
+						settings[key.strip()] = value.strip()
+
+					elif current_lattice is not None and current_lattice + " type" not in settings:
+						settings[current_lattice + " type"] = line
+
+			# stop the import if the file is empty
+			if not settings:
+				QMessageBox.warning(self, "Import error", "The selected parameter file is empty.")
+				return
+
+			# do NOT require every setting --> older pyatoms files dont have the updates
+			# so we want to preserve backwards compatability
+			recognized_anchors = {"# of layers", "Pix", "L (nm)", "Lattice 1 type", "a (nm)"}
+
+			if not any(key in settings for key in recognized_anchors):
+				QMessageBox.warning(self, "Import error", "The selected file does not appear to be a PyAtoms parameter file.")
+				return
+
+			skipped_settings = []
+
+			# parsing helpers
+			def parse_text(value):
+				return value.strip()
+			
+			def parse_first_float(value):
+				return float(value.strip()[0])
+
+			def parse_pix(value):
+				pix = int(value.lower().split("x", 1)[0].strip())
+
+				if pix < 2:
+					raise ValueError("pixel count must be at least 2")
+
+				return pix
+
+			def parse_bool(value):
+				text = value.strip().lower()
+
+				if text in ("true", "1", "yes", "on"):
+					return True
+
+				if text in ("false", "0", "no", "off"):
+					return False
+
+				raise ValueError("expected True or False")
+
+			def parse_pair(value):
+				pair = ast.literal_eval(value)
+
+				if not isinstance(pair, (tuple, list)) or len(pair) != 2:
+					raise ValueError("expected two values")
+
+				return float(pair[0]), float(pair[1])
+
+			def parse_layer_setting(value):
+				parts = value.split(",", 1)
+				layer_count = parts[0].strip()
+
+				if layer_count not in ("Single", "Bilayer", "Trilayer"):
+					raise ValueError("unrecognized layer setting: " + layer_count)
+
+				mode = None
+
+				if len(parts) == 2:
+					mode_text = parts[1].strip()
+
+					if ":" in mode_text:
+						mode_text = mode_text.split(":", 1)[1].strip()
+
+					if mode_text != "":
+						if mode_text not in ("Simple", "Log"):
+
+							raise ValueError("unrecognized moiré mode: "+ mode_text)
+
+						mode = mode_text
+
+				return layer_count, mode
+
+			# safe GUI-setting helpers
+			def set_group_button(group, button):
+				buttons = group.buttons()
+				previous_states = [item.blockSignals(True) for item in buttons]
+
+				button.setChecked(True)
+
+				for item, was_blocked in zip(buttons, previous_states):
+					item.blockSignals(was_blocked)
+
+			def set_checked_safely(widget, checked):
+				was_blocked = widget.blockSignals(True)
+				widget.setChecked(checked)
+				widget.blockSignals(was_blocked)
+
+			def set_combo_safely(widget, text):
+				if widget.findText(text) == -1:
+					raise ValueError("unsupported option: " + text)
+
+				was_blocked = widget.blockSignals(True)
+				widget.setCurrentText(text)
+				widget.blockSignals(was_blocked)
+
+			def set_attr_and_text(attr_name, widget, value, display_value=None):
+				setattr(self, attr_name, value)
+				widget.setText(str(value if display_value is None else display_value))
+
+			# specialized setting helpers
+			def set_layer_setting(value):
+				layer_count, mode = value
+
+				self.moireBtn = layer_count
+
+				layer_buttons = {
+					"Single": self.noMoire,
+					"Bilayer": self.yesMoire,
+					"Trilayer": self.trilayer
+				}
+
+				set_group_button(self.moire_btn_group, layer_buttons[layer_count])
+
+				if mode is not None:
+					self.modeBtn = mode
+
+					mode_buttons = {
+						"Simple": self.SimpleMode_btn,
+						"Log": self.LogMode_btn
+					}
+
+					set_group_button(self.mode_btn_group, mode_buttons[mode])
+
+			def set_lattice_type(attr_name, group, hex_button, square_button, value):
+				if value == "Hexagonal":
+					button = hex_button
+
+				elif value == "Square":
+					button = square_button
+
+				else:
+					raise ValueError("unsupported lattice type: " + value)
+
+				setattr(self, attr_name, value)
+				set_group_button(group, button)
+
+			def set_origin(attr_name, group, hollow_button, a_button, b_button, value):
+				buttons ={
+					"Hollow": hollow_button,
+					"A-site": a_button,
+					"B-site": b_button
+				}				
+
+				if value not in buttons:
+					raise ValueError("unsupported origin: " + value)
+
+				setattr(self, attr_name, value)
+				set_group_button(group, buttons[value])
+
+			def set_strain_frame(attr_name, combo, lattice_number, value):
+				set_combo_safely(combo, value)
+				setattr(self, attr_name, value)
+				self._set_strain_label_frame(lattice_number, value)
+
+			def set_low_pass_enabled(value):
+				self.filter_bool = value
+				set_checked_safely(self.filter_btn, value)
+
+			def set_drift_enabled(value):
+				self.drift_bool = value
+				set_checked_safely(self.drift_checkbox, value)
+
+			def set_fast_scan_direction(value):
+				set_combo_safely(self.fast_scan_dropdown, value)
+				self.fast_scan_direction = value
+
+
+			# apply one setting only if it exists
+			# if it exists but cant be understood then we skip only that setting
+			# instead of stopping the entire import
+			def apply_setting(key, parser, setter):
+				if key not in settings:
+					return
+
+				try:
+					setter(parser(settings[key]))
+
+				except Exception as error:
+					skipped_settings.append(key + ": " + str(error))
+
+			# layer count and moire mode
+			apply_setting("# of layers", parse_layer_setting, set_layer_setting)
+
+			# general parameters
+			apply_setting("eta", parse_first_float, lambda value: set_attr_and_text("eta", self.eta_input, value))
+			apply_setting("xi", parse_first_float, lambda value: set_attr_and_text("xi", self.xi_input, value))
+			apply_setting("Pix", parse_pix, lambda value: set_attr_and_text("pix", self.pix_input, value))
+			apply_setting("L (nm)", float, lambda value: set_attr_and_text("L", self.L_input, value))
+			apply_setting("Image center offset (nm,nm)", parse_pair, lambda value: set_attr_and_text("center", self.center_input, value))
+			apply_setting("Image offset angle", float, lambda value: set_attr_and_text("theta_im", self.theta_im_input, value))
+			apply_setting("Low pass filter", parse_bool, set_low_pass_enabled)
+			apply_setting("Sigma (real pix)", float, lambda value: set_attr_and_text("sigma", self.sigma_input, value))
+
+			# lattice 1
+			apply_setting("Lattice 1 type", parse_text, lambda value: set_lattice_type("lattice1", self.symm_btn_group, self.hex1btn, self.sq1btn, value))
+			apply_setting("a (nm)", float, lambda value: set_attr_and_text("a", self.a_input, value))
+
+			# strain is stored internally as a decimal, but the GUI displays percent
+			apply_setting("e11", float, lambda value: set_attr_and_text("e11", self.e11_input, value, f"{value * 100:g}"))
+			apply_setting("e12", float, lambda value: set_attr_and_text("e12", self.e12_input, value, f"{value * 100:g}"))
+			apply_setting("e22", float, lambda value: set_attr_and_text("e22", self.e22_input, value, f"{value * 100:g}"))
+
+			apply_setting("Strain frame 1", parse_text, lambda value: set_strain_frame("strain1_frame", self.strain1_frame_dropdown, 1, value))
+			apply_setting("Alpha1", float, lambda value: set_attr_and_text("alpha1", self.alpha1_input, value))
+			apply_setting("Beta1", float, lambda value: set_attr_and_text("beta1", self.beta1_input, value))
+			apply_setting("Origin1", parse_text, lambda value: set_origin("origin1", self.origin1_group, self.hollowsite1, self.Asite1, self.Bsite1, value))
+
+			# lattice 2
+			apply_setting("Lattice 2 type", parse_text, lambda value: set_lattice_type("lattice2", self.symm2_btn_group, self.hex2btn, self.sq2btn, value))
+			apply_setting("b (nm)", float, lambda value: set_attr_and_text("b", self.b_input, value))
+
+			apply_setting("d11", float, lambda value: set_attr_and_text("d11", self.d11_input, value, f"{value * 100:g}"))
+			apply_setting("d12", float, lambda value: set_attr_and_text("d12", self.d12_input, value, f"{value * 100:g}"))
+			apply_setting("d22", float, lambda value: set_attr_and_text("d22", self.d22_input, value, f"{value * 100:g}"))
+
+			apply_setting("Strain frame 2", parse_text, lambda value: set_strain_frame("strain2_frame", self.strain2_frame_dropdown, 2, value))
+			apply_setting("Alpha2", float, lambda value: set_attr_and_text("alpha2", self.alpha2_input, value))
+			apply_setting("Beta2", float, lambda value: set_attr_and_text("beta2", self.beta2_input, value))
+			apply_setting("Origin2", parse_text, lambda value: set_origin("origin2", self.origin2_group, self.hollowsite2, self.Asite2, self.Bsite2, value))
+			apply_setting("Twist angle (btwn lattice 1 & 2)", float, lambda value: set_attr_and_text("theta_tw", self.thetatw_input, value))
+
+			# lattice 3
+			apply_setting("Lattice 3 type", parse_text, lambda value: set_lattice_type("lattice3", self.symm3_btn_group, self.hex3btn, self.sq3btn, value))
+			apply_setting("c (nm)", float, lambda value: set_attr_and_text("c", self.c_input, value))
+
+			apply_setting("f11", float, lambda value: set_attr_and_text("f11", self.f11_input, value, f"{value * 100:g}"))
+			apply_setting("f12", float, lambda value: set_attr_and_text("f12", self.f12_input, value, f"{value * 100:g}"))
+			apply_setting("f22", float, lambda value: set_attr_and_text("f22", self.f22_input, value, f"{value * 100:g}"))
+
+			apply_setting("Strain frame 3", parse_text, lambda value: set_strain_frame("strain3_frame", self.strain3_frame_dropdown, 3, value))
+			apply_setting("Alpha3", float, lambda value: set_attr_and_text("alpha3", self.alpha3_input, value))
+			apply_setting("Beta3", float, lambda value: set_attr_and_text("beta3", self.beta3_input, value))
+			apply_setting("Origin3", parse_text, lambda value: set_origin("origin3", self.origin3_group, self.hollowsite3, self.Asite3, self.Bsite3, value))
+			apply_setting("Twist angle (btwn lattice 2 & 3)", float, lambda value: set_attr_and_text("theta_tw2", self.thetatw2_input, value))
+
+			# scanner, drift, and time estimators
+			apply_setting("Tip scanner spped", parse_first_float, lambda value: set_attr_and_text("vt", self.vt_input, value))
+			apply_setting("Drift enabled", parse_bool, set_drift_enabled)
+			apply_setting("Drift velocity (nm/s)", parse_pair, lambda value: set_attr_and_text("drift_velocity", self.drift_velocity_input, value))
+			apply_setting("Fast scan direction", parse_text, set_fast_scan_direction)
+			apply_setting("Time per spectra", parse_first_float, lambda value: set_attr_and_text("tps", self.tps_input, value))
+
+			# refresh derived values
+			self.updateResolutions()
+
+			self.sigma_real = self.sigma * self.L / (self.pix - 1)
+			self.sigma_real_label.setText("\u03C3\u1D63: %.2f nm" % self.sigma_real)
+
+			if self.sigma_real == 0:
+				self.sigma_k_label.setText("\u03C3\u2096: \u221E nm\u207B\u00B9")
+
+			else:
+				self.sigma_k_label.setText("\u03C3\u2096: %.2f nm\u207B\u00B9" % (1 / self.sigma_real))
+
+			# recalculate time estimates from imported Pix, L, tip speed, and time per spectrum instead of importing the saved estimatees
+			if self.vt > 0:
+				self.time_tot = (2 * self.pix * self.L) / self.vt
+
+				self.hrs = int(self.time_tot // 3600)
+				self.remain = self.time_tot - self.hrs * 3600
+				self.mins = int(self.remain // 60)
+				self.sec = int(self.time_tot - (3600 * self.hrs) - (60 * self.mins))
+
+				self.topo_eta_label.setText("Est. time: " + str(self.hrs) + "h " + str(self.mins) + "min " + str(self.sec) + "s")
+
+				self.time_map_tot = (self.tps * self.pix * self.pix) + self.time_tot
+
+				self.days_map = int(self.time_map_tot // 86400)
+				self.remain_map = self.time_map_tot - self.days_map * 86400
+				self.hrs_map = int(self.remain_map // 3600)
+				self.mins_map = int(self.time_map_tot - (self.days_map * 86400) - (3600 * self.hrs_map)) // 60
+
+				self.map_eta_label.setText("Est. time: " + str(self.days_map) + "d " + str(self.hrs_map) + "h " + str(self.mins_map) + "m")
+
+
+			# everything has been imported! update the GUI and plot once
+			self.updateMoireCalcLayerVisibility()
+			self.updateMoireCalcDisplays()
+			self.plotAtoms()
+
+			# missing settings are normal for older files , so do not warn about them
+			# only warn when a setting existed in the file but its value was unusable
+			if skipped_settings:
+				QMessageBox.warning(self, "Import completed with skipped settings", "The settings file was imported, but these saved values could not be applied:\n\n" + "\n".join(skipped_settings))
+
+		except Exception:
+			QMessageBox.critical(self, "Import error", traceback.format_exc())
+			return
 
 	def updateSaveButton(self):
 		# The line below opens the file directory so you can choose where to save the files...
@@ -2575,9 +4381,13 @@ class SimulatorWidget(QWidget):
 		# self.dir_path = QFileDialog.getExistingDirectory(self, "Choose Directory", os.getcwd()) # This just opens the directory files. this seems like its more for opening/selecting a certain file rather than saving it 
 		self.saveFileName = QFileDialog.getSaveFileName(self, "Save file as...",os.getcwd())  # This returns a 2 item tuple, and the first item is the path directory w/the file name so save the files here
 		# Use try/except because the gui would crash if i opened the file dialog to save a file, then pressed cancel
+
+		if self.saveFileName[0] == "":
+			return
+
 		try:
 			self.filePath=self.saveFileName[0] # This includes the full path... has form: ~/users/Desktop/folder/filename
-			self.fileName = self.filePath.split('/')[-1] # Split the string by the slant / character. Splitting it creates a list, the [-1] index retrieves the LAST entry of that list, which is going to be the main file name of all the files that will be saved
+			self.fileName = os.path.basename(self.filePath)
 															
 
 			# Check whether the specified path exists or not. from https://appdividend.com/2021/07/03/how-to-create-directory-if-not-exist-in-python/
@@ -2598,32 +4408,95 @@ class SimulatorWidget(QWidget):
 			# Save atoms array as txt file in the created folder
 			np.savetxt(self.filePath + '/' + self.fileName +'.txt', self.Z)
 
-			# Also save a .txt file with the input parameter values: (IN THE FUTURE maybe make this a pandas dataframe or csv file or something?)
-			param_file = open(self.filePath + '/' + self.fileName +'_params.txt', "w+") # Open a new blank text file where we will write the input parameters
-			param_file.write("# of layers: " + (self.moireBtn) + ", Moiré mode: " + (self.modeBtn) + "\neta: " + str(self.eta) + " (relative strength of sum vs product of sublattices)" +
-					"\nxi: " + str(self.xi) + " (ratio of layer distance, d, to decay length, λ)" +
-					"\nPix: " + str(self.pix) + " x " + str(self.pix) + "\nL (nm): " + str(self.L) +  "\nImage center offset (nm,nm): " + str(self.center)+  "\nImage offset angle: " + str(self.theta_im) + "\nLow pass filter: " + str(self.filter_bool) + '\nSigma (real pix): ' + str(self.sigma) +
-					'\n\n--------------------------------\nLattice 1:\n--------------------------------\n' + self.lattice1 + '\na (nm): ' + str(self.a) + '\ne11: ' + str(self.e11) +
-					'\ne12: ' + str(self.e12) + '\ne22: ' + str(self.e22) + "\nAlpha1: " + str(self.alpha1) + "\nBeta1: " + str(self.beta1) + "\nOrigin1: " + str(self.origin1) + 
-					'\n\n--------------------------------\nLattice 2:\n--------------------------------\n' + self.lattice2 + '\nb (nm): ' + str(self.b) + '\nd11: ' + str(self.d11) + 
-					'\nd12: ' + str(self.d12) + '\nd22: ' + str(self.d22) + "\nAlpha2: " + str(self.alpha2) + "\nBeta2: " + str(self.beta2) + "\nOrigin2: " + str(self.origin2) + 
-					'\nTwist angle (btwn lattice 1 & 2): ' + str(self.theta_tw) + '\n\n--------------------------------\nLattice 3:\n--------------------------------\n' + self.lattice3 + '\nc (nm): ' + str(self.c) + '\nf11: ' + str(self.f11) + 
-					'\nf12: ' + str(self.f12) + '\nf22: ' + str(self.f22) + "\nAlpha3: " + str(self.alpha3) + "\nBeta3: " + str(self.beta3) + "\nOrigin3: " + str(self.origin3) + 
-					'\nTwist angle (btwn lattice 2 & 3): ' + str(self.theta_tw2) + 
-					'\n\n--------------------------------\nEstimated time to take STM topography: ' + str(self.hrs) + 'h ' + str(self.mins) + 'min ' + str(self.sec) + ' s\nTip scanner speed: ' + str(self.vt) + ' nm/s'
-					'\nEstimated time to take spectroscopy map: ' + str(self.days_map) + 'days ' + str(self.hrs_map) + 'h ' + str(self.mins_map) +  'min\nTime per spectra: ' + str(self.tps) + ' s')
-					
-			param_file.close() # Close the text file
-		
+			# build all parameter text before creating the file
+			# this prevents an incomplete blank file if one of the values causes an error
+			param_text = (
+				"# of layers: " + self.moireBtn + ", Moiré mode: " + self.modeBtn +
+				"\neta: " + str(self.eta) + " (relative strength of sum vs product of sublattices)" +
+				"\nxi: " + str(self.xi) + " (ratio of layer distance, d, to decay length, λ)" +
+				"\nPix: " + str(self.pix) + " x " + str(self.pix) +
+				"\nL (nm): " + str(self.L) +
+				"\nImage center offset (nm,nm): " + str(self.center) +
+				"\nImage offset angle: " + str(self.theta_im) +
+				"\nLow pass filter: " + str(self.filter_bool) +
+				"\nSigma (real pix): " + str(self.sigma) +
 
-		except FileNotFoundError: # https://www.pythonfixing.com/2022/03/fixed-pyqt5-application-shutting-down.html
-								  # If you press cancel when the file dialog window opens, it will return self.saveFileName = '' (an empty string), which gives error in the rest of the code above
-			return 				  # ^^ so it will bring up a FileNotFound error; if this happens, just do nothing / the filedialog box will close but the app wont crash 
+				"\n\n--------------------------------" +
+				"\nLattice 1:" +
+				"\n--------------------------------" +
+				"\n" + self.lattice1 +
+				"\na (nm): " + str(self.a) +
+				"\ne11: " + str(self.e11) +
+				"\ne12: " + str(self.e12) +
+				"\ne22: " + str(self.e22) +
+				"\nStrain frame 1: " + str(self.strain1_frame) +
+				"\nAlpha1: " + str(self.alpha1) +
+				"\nBeta1: " + str(self.beta1) +
+				"\nOrigin1: " + str(self.origin1) +
+
+				"\n\n--------------------------------" +
+				"\nLattice 2:" +
+				"\n--------------------------------" +
+				"\n" + self.lattice2 +
+				"\nb (nm): " + str(self.b) +
+				"\nd11: " + str(self.d11) +
+				"\nd12: " + str(self.d12) +
+				"\nd22: " + str(self.d22) +
+				"\nStrain frame 2: " + str(self.strain2_frame) +
+				"\nAlpha2: " + str(self.alpha2) +
+				"\nBeta2: " + str(self.beta2) +
+				"\nOrigin2: " + str(self.origin2) +
+				"\nTwist angle (btwn lattice 1 & 2): " + str(self.theta_tw) +
+
+				"\n\n--------------------------------" +
+				"\nLattice 3:" +
+				"\n--------------------------------" +
+				"\n" + self.lattice3 +
+				"\nc (nm): " + str(self.c) +
+				"\nf11: " + str(self.f11) +
+				"\nf12: " + str(self.f12) +
+				"\nf22: " + str(self.f22) +
+				"\nStrain frame 3: " + str(self.strain3_frame) +
+				"\nAlpha3: " + str(self.alpha3) +
+				"\nBeta3: " + str(self.beta3) +
+				"\nOrigin3: " + str(self.origin3) +
+				"\nTwist angle (btwn lattice 2 & 3): " + str(self.theta_tw2) +
+
+				"\n\n--------------------------------" +
+				"\nEstimated time to take STM topography: " + str(self.hrs) + "h " + str(self.mins) + "min " + str(self.sec) + " s" +
+				"\nTip scanner speed: " + str(self.vt) + " nm/s" +
+				"\nDrift enabled: " + str(self.drift_bool) +
+				"\nDrift velocity (nm/s): " + str(self.drift_velocity) +
+				"\nFast scan direction: " + str(self.fast_scan_direction) +
+				"\nEstimated time to take spectroscopy map: " + str(self.days_map) + "days " + str(self.hrs_map) + "h " + str(self.mins_map) + "min" +
+				"\nTime per spectra: " + str(self.tps) + " s"
+			)
+
+			param_path = os.path.join(self.filePath, self.fileName + "_params.txt")
+
+			with open(param_path, "w", encoding="utf-8") as param_file:
+				param_file.write(param_text)
+
+		except Exception as error:
+			QMessageBox.critical(self, "Save error", "The files could not be saved.\n\n" + str(error))
+			return
 
 	def initFiltering(self):
-		groupBox = QGroupBox("Low pass filtering")
-		groupBox.setToolTip("Low pass filter the data")
-		vlayout = QVBoxLayout(self)
+		# groupBox = QGroupBox("Low pass filtering")
+		# groupBox.setToolTip("Low pass filter the data")
+
+		groupBox = QGroupBox("Filtering")
+		groupBox.setToolTip("Filter the data")
+
+		self.filter_tabs = QTabWidget(self)
+
+		self.lowpass_tab = QWidget(self)
+		self.fft_filter_tab = QWidget(self)
+
+		self.filter_tabs.addTab(self.lowpass_tab, "Low pass")
+		self.filter_tabs.addTab(self.fft_filter_tab, "2D FFT filter")
+
+		self.filter_tabs.currentChanged.connect(self.updateActiveFilterTab)
 
 		self.filter_btn = QCheckBox("Filter")
 		self.filter_btn.setChecked(False)
@@ -2647,32 +4520,748 @@ class SimulatorWidget(QWidget):
 		# Define label to display the value of the slider next to the textbox
 		self.sigma_label = QLabel("Gaussian width, \u03c3:", self)
 
-		self.sigma_real_label = QLabel("     %.2f nm"  % (self.sigma_real), self)
+		self.sigma_real_label = QLabel("\u03C3\u1D63: %.2f nm"  % (self.sigma_real), self)
+
+		if self.sigma_real == 0:
+			sigma_k_text = "\u221e"
+
+		else:
+			sigma_k_text = "%.2f" % (1 / self.sigma_real)
+
+		self.sigma_k_label = QLabel("\u03C3\u2096: %s nm\u207B\u00B9"  % sigma_k_text, self)
 
 
-		hbox = QHBoxLayout(self)
+		hbox = QHBoxLayout()
 		hbox.addWidget(self.filter_btn)
 		hbox.addWidget(self.sigma_real_label)
+		hbox.addWidget(self.sigma_k_label)
 
-		vlayout = QVBoxLayout(self)
-		# vlayout.addLayout(hbox)
+		# vlayout = QVBoxLayout(self)
 
+		# layout for the existing low pass filter tab
+		lowpass_layout = QVBoxLayout(self.lowpass_tab)
 
-		hbox2 = QHBoxLayout(self)
+		hbox2 = QHBoxLayout()
 		hbox2.addWidget(self.sigma_label)
 		hbox2.addWidget(self.sigma_input)
 		hbox2.addWidget(self.sigmaUnitLabel)
 		hbox2.addWidget(self.sigma_btn)
 		# hbox2.setSpacing(2)
 
-		vlayout.addLayout(hbox)
-		vlayout.addLayout(hbox2)
+		# vlayout.addLayout(hbox)
+		# vlayout.addLayout(hbox2)
 
-		vlayout.setSpacing(3)
+		# vlayout.setSpacing(3)
+
+		# groupBox.setLayout(vlayout)
+		lowpass_layout.addLayout(hbox)
+		lowpass_layout.addLayout(hbox2)
+
+		lowpass_layout.setSpacing(3)
+
+		# layout for the 2D FFT filter tab
+		fft_filter_layout = QVBoxLayout(self.fft_filter_tab)
+
+		# button to turn FFT region selection on and off
+		self.fft_select_btn = QPushButton("Select regions", self)
+		self.fft_select_btn.setAutoDefault(False)
+		self.fft_select_btn.setToolTip("Select regions on the FFT to filter.")
+		self.fft_select_btn.clicked.connect(self.toggleFFTSelection)
+
+		# checkbox to center new FFT selections on the origin
+		self.fft_snap_origin_checkbox = QCheckBox("Snap to origin", self)
+		self.fft_snap_origin_checkbox.setToolTip("Center new FFT selections on the origin.")
+
+		self.fft_precise_checkbox = QCheckBox("Precise dimensions", self)
+		self.fft_precise_checkbox.setToolTip("Enable exact width, height, and angle editing for FFT selections.")
+		self.fft_precise_checkbox.toggled.connect(self.toggleFFTPreciseDimensions)
+
+		# self.fft_width_label = QLabel("Width:", self)
+		self.fft_width_input = QLineEdit(self)
+		self.fft_width_input.setPlaceholderText("Width")
+		self.fft_width_input.setToolTip("Width of the FFT selection in reciprocal-space units.")
+		self.fft_width_input.returnPressed.connect(self.applyFFTPreciseDimensions)
+		self.fft_width_unit_label = QLabel("nm\u207B\u00B9", self)
+
+		# self.fft_height_label = QLabel("Height:", self)
+		self.fft_height_input = QLineEdit(self)
+		self.fft_height_input.setPlaceholderText("Height")
+		self.fft_height_input.setToolTip("Height of the FFT selection in reciprocal-space units.")
+		self.fft_height_input.returnPressed.connect(self.applyFFTPreciseDimensions)
+		self.fft_height_unit_label = QLabel("nm\u207B\u00B9", self)
+
+		# self.fft_angle_label = QLabel("Angle:", self)
+		self.fft_angle_input = QLineEdit(self)
+		self.fft_angle_input.setPlaceholderText("0")
+		self.fft_angle_input.setToolTip("Rotation angle of the FFT selection in degrees.")
+		self.fft_angle_input.returnPressed.connect(self.applyFFTPreciseDimensions)
+		self.fft_angle_unit_label = QLabel("\u00B0", self)
+
+		self.fft_width_input.setFixedWidth(60)
+		self.fft_height_input.setFixedWidth(60)
+		self.fft_angle_input.setFixedWidth(40)
+
+		self.fft_apply_size_btn = QPushButton("Apply", self)
+		self.fft_apply_size_btn.setAutoDefault(False)
+		self.fft_apply_size_btn.clicked.connect(self.applyFFTPreciseDimensions)
+
+		# choode which version of the image to display
+		self.fft_original_btn = QRadioButton("Original")
+		self.fft_filtered_btn = QRadioButton("Filtered")
+		self.fft_difference_btn = QRadioButton("Difference")
+
+		self.fft_original_btn.setChecked(True)
+
+		# keep the FFT display options mutually exclusive
+		self.fft_display_btn_group = QButtonGroup(self)
+		self.fft_display_btn_group.addButton(self.fft_original_btn)
+		self.fft_display_btn_group.addButton(self.fft_filtered_btn)
+		self.fft_display_btn_group.addButton(self.fft_difference_btn)
+
+		self.fft_original_btn.toggled.connect(self.updateFFTFilterDisplay)
+		self.fft_filtered_btn.toggled.connect(self.updateFFTFilterDisplay)
+		self.fft_difference_btn.toggled.connect(self.updateFFTFilterDisplay)
+
+
+		fft_display_layout = QHBoxLayout()
+		fft_display_layout.addWidget(self.fft_original_btn)
+		fft_display_layout.addWidget(self.fft_filtered_btn)
+		fft_display_layout.addWidget(self.fft_difference_btn)
+
+		# buttons for removing fft selections
+		self.fft_undo_btn = QPushButton("Undo", self)
+		self.fft_undo_btn.setAutoDefault(False)
+		self.fft_undo_btn.setToolTip("Remove the most recent FFT selection")
+		self.fft_undo_btn.clicked.connect(self.undoFFTSelection)
+
+		self.fft_clear_btn = QPushButton("Clear", self)
+		self.fft_clear_btn.setAutoDefault(False)
+		self.fft_clear_btn.setToolTip("Clear all FFT selections")
+		self.fft_clear_btn.clicked.connect(self.clearFFTSelections)
+
+		fft_selection_layout = QHBoxLayout()
+		fft_selection_layout.addWidget(self.fft_undo_btn)
+		fft_selection_layout.addWidget(self.fft_clear_btn)
+
+		fft_size_layout = QHBoxLayout()
+		# fft_size_layout.addWidget(self.fft_width_label)
+		fft_size_layout.addWidget(self.fft_width_input)
+		fft_size_layout.addWidget(self.fft_width_unit_label)
+		# fft_size_layout.addWidget(self.fft_height_label)
+		fft_size_layout.addWidget(self.fft_height_input)
+		fft_size_layout.addWidget(self.fft_height_unit_label)
+		# fft_size_layout.addWidget(self.fft_angle_label)
+		fft_size_layout.addWidget(self.fft_angle_input)
+		fft_size_layout.addWidget(self.fft_angle_unit_label)
+		fft_size_layout.addWidget(self.fft_apply_size_btn)
+
+		# self.fft_width_label.setVisible(False)
+		self.fft_width_input.setVisible(False)
+		self.fft_width_unit_label.setVisible(False)
+		# self.fft_height_label.setVisible(False)
+		self.fft_height_input.setVisible(False)
+		self.fft_height_unit_label.setVisible(False)
+		self.fft_angle_input.setVisible(False)
+		self.fft_angle_unit_label.setVisible(False)
+		self.fft_apply_size_btn.setVisible(False)
+
+		fft_filter_layout.addWidget(self.fft_select_btn)
+		fft_filter_layout.addWidget(self.fft_snap_origin_checkbox)
+		fft_filter_layout.addWidget(self.fft_precise_checkbox)
+		fft_filter_layout.addLayout(fft_size_layout)
+		fft_filter_layout.addLayout(fft_selection_layout)
+		fft_filter_layout.addLayout(fft_display_layout)
+
+		fft_filter_layout.setSpacing(3)
+
+		# add the filtering tabs to the outer group box
+		vlayout = QVBoxLayout()
+		vlayout.addWidget(self.filter_tabs)
 
 		groupBox.setLayout(vlayout)
 
 		return groupBox
+
+	def hideFFTSelections(self):
+		for patch in self.fft_selection_patches:
+			patch.remove()
+
+		self.fft_selection_patches = []
+		self.canvas.draw_idle()
+
+	def updateActiveFilterTab(self, index):
+		"""
+		make the lowpass and 2d fft filters mutually exclusive
+		"""
+
+		# low pass tab
+		if index == 0:
+			# turn off fft selectiom ode
+			if self.fft_filter_enabled:
+				self.toggleFFTSelection()
+
+			# hide fft selection drawings, but keep their stored data
+			self.hideFFTSelections()
+
+			# retrn the fft display to the original image
+			self.fft_original_btn.setChecked(True)
+
+		# 2d fft filter tab
+		elif index == 1:
+			# turn off the lowpass filter
+			if self.filter_btn.isChecked():
+				self.filter_btn.setChecked(False)
+
+			# redraw any saved fft selections
+			self.drawFFTSelections()
+
+	def toggleFFTPreciseDimensions(self, checked):
+		# self.fft_width_label.setVisible(checked)
+		self.fft_width_input.setVisible(checked)
+		self.fft_width_unit_label.setVisible(checked)
+		# self.fft_height_label.setVisible(checked)
+		self.fft_height_input.setVisible(checked)
+		self.fft_height_unit_label.setVisible(checked)
+		self.fft_angle_input.setVisible(checked)
+		self.fft_angle_unit_label.setVisible(checked)
+		self.fft_apply_size_btn.setVisible(checked)
+
+		if checked and self.fft_active_selection is not None:
+			if self.fft_active_selection < len(self.fft_selections):
+				selection = self.fft_selections[self.fft_active_selection]
+
+				self.fft_width_input.setText(f"{selection['width']:.4f}")
+				self.fft_height_input.setText(f"{selection['height']:.4f}")
+				self.fft_angle_input.setText(f"{selection['angle']:.2f}")
+
+		self.drawFFTSelections()
+
+	def applyFFTPreciseDimensions(self):
+		"""
+		apply exact width and height to the most recent FFT selection 
+		"""
+		try:
+			width = eval(self.fft_width_input.text())
+			height = eval(self.fft_height_input.text())
+			angle = eval(self.fft_angle_input.text())
+
+		except ValueError:
+			return
+
+		if width <= 0 or height <= 0:
+			return
+
+		if len(self.fft_selections) == 0:
+			return
+
+		if self.fft_active_selection is None:
+			return
+
+		if self.fft_active_selection >= len(self.fft_selections):
+			return
+
+		# edit the most recently created FFT selection
+		self.fft_selections[self.fft_active_selection]["width"] = width
+		self.fft_selections[self.fft_active_selection]["height"] = height
+		self.fft_selections[self.fft_active_selection]["angle"] = angle
+
+		# redraw the selections and rebuild the FFT mask
+		self.drawFFTSelections()
+		self.buildFFTMask()
+
+		if self.fft_filter_display != "Original":
+			self.updateFFTFilteredImage()
+
+	def createFFTSelector(self):
+		"""
+		create the interactive FFT ellipse selector
+		"""
+
+		# dscard the old selector before attaching one to the new FFT axes
+		if self.fft_selector is not None:
+			self.fft_selector.set_active(False)
+			self.fft_selector.disconnect_events()
+			self.fft_selector = None
+
+		self.fft_selector = EllipseSelector(self.ax_fft, self.onFFTSelect, useblit = True, button = [1], interactive = False, props = dict(facecolor = "cyan", edgecolor = "cyan", alpha = 0.25), state_modifier_keys = {"square": "shift"})
+
+	def toggleFFTSelection(self):
+		"""
+		turn interactive FFT region selection on and off
+		"""
+		if not self.fft_filter_enabled:
+			self.fft_filter_enabled = True
+			self.fft_select_btn.setText("Stop selecting")
+
+			# create an ellipse selector on the FFT plot
+			self.createFFTSelector()
+
+			# update the mirrored region while the user drags a selection
+			self.fft_press_cid = self.canvas.mpl_connect("button_press_event", self.startFFTMirrorPreview)
+			self.fft_motion_cid = self.canvas.mpl_connect("motion_notify_event", self.updateFFTMirrorPreview)
+			self.fft_release_cid = self.canvas.mpl_connect("button_release_event", self.stopFFTMirrorPreview)
+
+			self.fft_click_cid = self.canvas.mpl_connect("button_press_event", self.selectExistingFFTRegion)
+
+		else:
+			self.fft_filter_enabled = False
+			self.fft_select_btn.setText("Select regions")
+
+			# turn off the FFT selector when selection mode is disabled
+			if self.fft_selector is not None:
+				self.fft_selector.set_active(False)
+				self.fft_selector.disconnect_events()
+				self.fft_selector = None
+
+			# disconnect the mirrored selection preview
+			if self.fft_press_cid is not None:
+				self.canvas.mpl_disconnect(self.fft_press_cid)
+				self.fft_press_cid = None
+
+			if self.fft_motion_cid is not None:
+				self.canvas.mpl_disconnect(self.fft_motion_cid)
+				self.fft_motion_cid = None
+
+			if self.fft_release_cid is not None:
+				self.canvas.mpl_disconnect(self.fft_release_cid)
+				self.fft_release_cid = None
+
+			self.fft_drag_start = None
+
+			if self.fft_mirror_preview is not None:
+				self.fft_mirror_preview.remove()
+				self.fft_mirror_preview = None
+				self.canvas.draw_idle()
+
+	def selectExistingFFTRegion(self, event):
+		if not self.fft_precise_checkbox.isChecked():
+			return
+		
+		if event.inaxes != self.ax_fft:
+			return
+
+		if event.xdata is None or event.ydata is None:
+			return
+
+		if len(self.fft_selections) == 0:
+			return
+
+		x = event.xdata
+		y = event.ydata
+
+		# search newest selections first
+		for i in range(len(self.fft_selections) - 1, -1, -1):
+			selection = self.fft_selections[i]
+
+			center_x = selection["center_x"]
+			center_y = selection["center_y"]
+			width = selection["width"]
+			height = selection["height"]
+			angle = selection["angle"]
+
+			if width <= 0 or height <= 0:
+				continue
+
+			# normalized ellipse equation
+			dx = (x - center_x) / (width / 2)
+			dy = (y - center_y) / (height / 2)
+
+			if dx**2 + dy**2 <= 1:
+				self.fft_active_selection = i
+
+				self.drawFFTSelections()
+				self.canvas.draw_idle()
+
+				self.fft_width_input.setText(f"{width:.4f}")
+				self.fft_height_input.setText(f"{height:.4f}")
+				self.fft_angle_input.setText(f"{angle:.2f}")
+
+				return
+
+
+	def startFFTMirrorPreview(self, event):
+		"""
+		start the mirrored FFT selection preview
+		"""
+
+		# only start selections made with the left mouse button on the fft
+		if event.inaxes != self.ax_fft or event.button != 1:
+			return
+
+		if event.xdata is None or event.ydata is None:
+			return
+
+		self.fft_drag_start = (event.xdata, event.ydata)
+
+
+	def updateFFTMirrorPreview(self, event):
+		""""
+		update the mirrored FFT region while dragging
+		"""
+
+		if self.fft_drag_start is None:
+			return
+
+		if event.inaxes != self.ax_fft:
+			return
+
+		if event.xdata is None or event.ydata is None:
+			return
+
+		x1, y1 = self.fft_drag_start
+		x2 = event.xdata
+		y2 = event.ydata
+
+		snap_origin = self.fft_snap_origin_checkbox.isChecked()
+
+		# hold Shift while dragging to constrain the selection to a circle
+		shift_held = QApplication.keyboardModifiers() & Qt.ShiftModifier
+
+		dx = x2 - x1
+		dy = y2 - y1
+
+		if snap_origin:
+			width = abs(dx)
+			height = abs(dy)
+
+			if shift_held:
+				size = max(width, height)
+				width = size
+				height = size
+
+			center_x = 0.0
+			center_y = 0.0
+
+		else:
+			if shift_held:
+				diameter = np.hypot(dx, dy)
+
+				width = diameter
+				height = diameter
+
+			else:
+				width = abs(dx)
+				height = abs(dy)
+
+			center_x = (x1 + x2) / 2
+			center_y = (y1 + y2) / 2
+
+		if shift_held or snap_origin:
+			# hide matplotlib's unconstrained temporary ellipse
+			if self.fft_selector is not None:
+				self.fft_selector.set_visible(False)
+
+			# create the main circular preview
+			if self.fft_main_preview is None:
+				self.fft_main_preview = Ellipse((center_x, center_y), width, height, facecolor = "cyan", edgecolor = "cyan", alpha = 0.25)
+				self.ax_fft.add_patch(self.fft_main_preview)
+
+			else:
+				self.fft_main_preview.center = (center_x, center_y)
+				self.fft_main_preview.width = width
+				self.fft_main_preview.height = height
+
+		else:
+			# show matplotlib's normal ellipse preview again
+			if self.fft_selector is not None:
+				self.fft_selector.set_visible(True)
+
+			# remove our custom main preview when Shift is released
+			if self.fft_main_preview is not None:
+				self.fft_main_preview.remove()
+				self.fft_main_preview = None	
+
+
+		# create the mirroed preview the first time the mouse moves
+		if self.fft_mirror_preview is None:
+			self.fft_mirror_preview = Ellipse((-center_x, -center_y), width, height, facecolor = "cyan", edgecolor = "cyan", alpha = 0.25)
+			self.ax_fft.add_patch(self.fft_mirror_preview)
+
+		# update the existing preview as the selection changes
+		else:
+			self.fft_mirror_preview.center = (-center_x, -center_y)
+			self.fft_mirror_preview.width = width
+			self.fft_mirror_preview.height = height
+
+		self.canvas.draw_idle()
+
+	def stopFFTMirrorPreview(self, event):
+		"""
+		remove the temporary mirrored FFT selection preview
+		"""
+
+		self.fft_drag_start = None
+
+		if self.fft_main_preview is not None:
+			self.fft_main_preview.remove()
+			self.fft_main_preview = None
+			
+		if self.fft_mirror_preview is not None:
+			self.fft_mirror_preview.remove()
+			self.fft_mirror_preview = None
+
+		self.canvas.draw_idle()
+
+
+	def updateFFTFilterDisplay(self):
+		"""
+		update which version of the real space image is displayed
+		"""
+
+		if self.fft_original_btn.isChecked():
+			self.fft_filter_display = "Original"
+
+		if self.fft_filtered_btn.isChecked():
+			self.fft_filter_display = "Filtered"
+
+		if self.fft_difference_btn.isChecked():
+			self.fft_filter_display = "Difference"
+
+		self.updateFFTFilteredImage()
+
+	def getFFTFilteredImage(self):
+		"""
+		return the real space image for the selected FFT display mode
+		"""
+
+		if self.fft_filter_display == "Original":
+			return self.Z
+
+		if self.fft_filtered_image is None:
+			return self.Z
+
+		if self.fft_filter_display == "Filtered":
+			return self.fft_filtered_image
+
+		if self.fft_filter_display == "Difference":
+			return self.Z - self.fft_filtered_image
+
+		return self.Z
+
+	def  updateFFTFilteredImage(self):
+		"""
+		update the displayed real space image without rebuilding the simulatiom
+		"""
+
+		if self.real_space_plot is None:
+			return
+
+		Z_display = self.getFFTFilteredImage()
+
+		self.real_space_plot.set_data(Z_display)
+
+		# update the displayed height range for the selected FFT components
+		zmin = np.min(Z_display)
+		zmax = np.max(Z_display)
+
+		if zmax > zmin:
+			self.real_space_plot.set_clim(zmin, zmax)
+
+
+		self.canvas.draw_idle()
+
+			
+
+	def onFFTSelect(self, eclick, erelease):
+		"""
+		store a selected FFT region and its mirrored region
+		"""
+
+		x1 = eclick.xdata
+		y1 = eclick.ydata
+		x2 = erelease.xdata
+		y2 = erelease.ydata
+
+		# ignore selections that start or end outside the FFT axes
+		if x1 is None or y1 is None or x2 is None or y2 is None:
+			return
+
+		snap_origin = self.fft_snap_origin_checkbox.isChecked()
+
+		# hold Shift while dragging to constrain the selection to a circle
+		shift_held = QApplication.keyboardModifiers() & Qt.ShiftModifier
+
+		dx = x2 - x1
+		dy = y2 - y1
+
+		if snap_origin:
+			width = abs(dx)
+			height = abs(dy)
+
+			if shift_held:
+				size = max(width, height)
+				width = size
+				height = size
+
+			center_x = 0.0
+			center_y = 0.0
+
+		else:
+			if shift_held:
+				diameter = np.hypot(dx, dy)
+
+				width = diameter
+				height = diameter
+
+			else:
+				width = abs(dx)
+				height = abs(dy)
+
+			center_x = (x1 + x2) / 2
+			center_y = (y1 + y2) / 2
+
+		# ignore selections with no area
+		if width == 0 or height == 0:
+			return
+
+		# store one selection -> the mirrored region is generated from this one
+		self.fft_selections.append({
+			"center_x": center_x,
+			"center_y": center_y,
+			"width": width,
+			"height": height,
+			"angle": 0.0
+		})
+
+		self.fft_active_selection = len(self.fft_selections) - 1
+
+		if self.fft_precise_checkbox.isChecked():
+			self.fft_width_input.setText(f"{width:.4f}")
+			self.fft_height_input.setText(f"{height:4f}")
+			self.fft_angle_input.setText("0.00")
+
+		self.drawFFTSelections()
+		self.buildFFTMask()
+
+		if self.fft_filter_display != "Original":
+			self.updateFFTFilteredImage()
+
+		# hide the selector's temporary ellipse after storign the selection
+		if self.fft_selector is not None:
+			self.fft_selector.set_visible(False)
+
+	def drawFFTSelections(self):
+		""""
+		draw stored FFT selections and their mirrored regions
+		"""
+
+		# remove previously drawn selection patches before redrawing
+		for patch in self.fft_selection_patches:
+			patch.remove()
+
+		self.fft_selection_patches = []
+
+		# redraw every saved selection
+		for i, selection in enumerate(self.fft_selections):
+			center_x = selection["center_x"]
+			center_y = selection["center_y"]
+			width = selection["width"]
+			height = selection["height"]
+			angle = selection["angle"]
+
+			# make the active selection easier to see
+			is_active = self.fft_precise_checkbox.isChecked() and i == self.fft_active_selection
+
+			linewidth = 2.5 if is_active else 1.0
+			edgecolor = "yellow" if is_active else "cyan"
+
+			# selected region
+			ellipse = Ellipse((center_x, center_y), width, height, angle = angle, facecolor = "cyan", edgecolor = edgecolor, alpha = 0.25)
+			self.ax_fft.add_patch(ellipse)
+			self.fft_selection_patches.append(ellipse)
+
+			# mirrored region across the FFT origin
+			mirror_ellipse = Ellipse((-center_x, -center_y), width, height, angle = angle, facecolor = "cyan", edgecolor = edgecolor, alpha = 0.25)
+			self.ax_fft.add_patch(mirror_ellipse)
+			self.fft_selection_patches.append(mirror_ellipse)
+
+		self.canvas.draw_idle()
+
+	def buildFFTMask(self):
+		"""
+		create a mask from the selected FFT regions
+		"""
+
+		# start with an empty mask the same size as the FFT
+		mask = np.zeros(self.fft_complex.shape, dtype = bool)
+
+		if len(self.fft_selections) == 0:
+			self.fft_mask = mask
+			self.fft_filtered_image = np.zeros_like(self.Z)
+			return mask
+
+		# reciprocal space coords used by the displayed FFT
+		k = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(self.pix, self.L/self.pix))
+
+		KX, KY = np.meshgrid(k, k)
+
+		for selection in self.fft_selections:
+			center_x = selection["center_x"]
+			center_y = selection["center_y"]
+			radius_x = selection["width"]/2
+			radius_y = selection["height"]/2
+
+			# selected ellipse
+			selected_region = ((KX - center_x)/radius_x)**2 + ((KY - center_y)/radius_y)**2 <= 1
+
+			# mirrored ellipse
+			mirrored_region = ((KX + center_x)/radius_x)**2 + ((KY + center_y)/radius_y)**2 <= 1
+
+			mask = mask | selected_region | mirrored_region
+
+		self.fft_mask = mask
+
+		# reconstrut the selected FFT components when the mask changes
+		selected_fft = self.fft_complex*self.fft_mask
+		self.fft_filtered_image = np.real(npf.ifft2(npf.ifftshift(selected_fft)))
+
+		return mask
+
+
+	def undoFFTSelection(self):
+		if len(self.fft_selections) == 0:
+			return
+
+		# remove the most recent selection
+		self.fft_selections.pop()
+
+		# update the active selection and dimension fields
+		if len(self.fft_selections) == 0:
+			self.fft_active_selection = None
+			self.fft_width_input.clear()
+			self.fft_height_input.clear()
+
+		else:
+			self.fft_active_selection = len(self.fft_selections) - 1
+
+			selection = self.fft_selections[self.fft_active_selection]
+
+			self.fft_width_input.setText(f"{selection['width']:.4f}")
+			self.fft_height_input.setText(f"{selection['height']:.4f}")
+			self.fft_angle_input.setText(f"{selection['angle']:.2f}")
+
+		# redraw the remaining selections
+		self.drawFFTSelections()
+
+		# rebuild the FFT mask
+		self.buildFFTMask()
+
+		# update the displayed filtered image IF needed
+		if self.fft_filter_display != "Original":
+			self.updateFFTFilteredImage()
+
+	def clearFFTSelections(self):
+		self.fft_selections = []
+		self.fft_active_selection = None
+		self.fft_width_input.clear()
+		self.fft_height_input.clear()
+
+		self.drawFFTSelections()
+		self.buildFFTMask()
+
+		if self.fft_filter_display != "Original":
+			self.updateFFTFilteredImage()
+	
 
 	def updateSigma(self):
 		if self.filter_btn.isChecked():
@@ -2685,7 +5274,15 @@ class SimulatorWidget(QWidget):
 					self.sigma_input.setPlaceholderText(str(self.sigma))
 					self.filter_bool = True
 					self.sigma_real = self.sigma*self.L/(self.pix-1)
-					self.sigma_real_label.setText("     %.2f nm"  %(self.sigma_real))
+					self.sigma_real_label.setText("\u03C3\u1D63: %.2f nm" % self.sigma_real)
+
+					if self.sigma_real == 0:
+						self.sigma_k_label.setText("\u03C3\u2096: \u221e nm\u207B\u00B9")
+
+					else:
+						sigma_k = 1/self.sigma_real
+						self.sigma_k_label.setText("\u03C3\u2096: %.2f nm\u207B\u00B9" % sigma_k)
+
 					self.plotAtoms()
 					self.harry_counter += 1
 					self.updateHarryCounter()

@@ -20,7 +20,7 @@ from numpy import log as log
 from numpy import pi as pi
 
 
-def squareatoms(pix, L, a, theta, e11, e12, e22, center):
+def squareatoms(pix, L, a, theta, e11, e12, e22, center, strain_frame = "Local lattice axes"):
     """
     Simulates a square atomic lattice and takes the FFT of the lattice
 
@@ -45,32 +45,80 @@ def squareatoms(pix, L, a, theta, e11, e12, e22, center):
     # Create a meshgrid of 'pix' number of points, values from 0 --> L
     xx = np.arange(-(pix//2),(pix-1)//2 + 1)*L/(pix-1) 
     [X,Y] = np.meshgrid(xx,xx)
+    
+    # Create square lattice
+    Z = evaluateSquareLatticeAtCoords(X, Y, a, theta, e11, e12, e22, center, strain_frame)
+
+    # FFT of lattice:
+    fftZ = np.abs(npf.fftshift(npf.fft2(Z- np.mean(np.mean(Z)))))  # subtract by mean(mean(Z)) to remove the strong peak at k=0 (DC/constant background)
+
+
+    return Z, fftZ
+
+def evaluateSquareLatticeAtCoords(X, Y, a, theta, e11, e12, e22, center, strain_frame = "Local lattice axes"):
+    """
+    evaluate a square lattice directly at coordinates x, y
+    
+    mirrors logic in squareatoms
+    """
+
     X0 = center[0]
     Y0 = center[1] 
 
     # Reciprocal lattice vectors for square crystal WITH STRAIN
     # k1 = (2*np.pi/a)*np.array([1 + e11, e12])
     # k2 = (2*np.pi/a)*np.array([e12, 1 + e22]) 
-    k1 = (2*np.pi/a)*np.array([1 - e11, -e12])
-    k2 = (2*np.pi/a)*np.array([-e12, 1 - e22])
 
+    k1_unstrained = (2*np.pi/a)*np.array([1, 0])
+    k2_unstrained = (2*np.pi/a)*np.array([0, 1])
+
+    # TESTING:
+    strain_tensor = np.array([[e11, e12],
+                             [e12, e22]])
+    
+    reciprocal_strain = np.linalg.inv(np.eye(2) + strain_tensor)
+
+    k1_strained = np.matmul(k1_unstrained, reciprocal_strain)
+    k2_strained = np.matmul(k2_unstrained, reciprocal_strain)
+
+    # original
+    # k1_strained = (2*np.pi/a)*np.array([1 - e11, -e12])
+    # k2_strained = (2*np.pi/a)*np.array([-e12, 1 - e22])
 
     ## Rotate the lattice by theta (in degrees)
     # Convert theta to radians
     theta_rad = np.deg2rad(theta) 
 
     # Create rotation matrix to multiply reciprocal lattice vectors to rotate the image 
-    rotmat = np.array([[cos(theta_rad), -sin(theta_rad)], [sin(theta_rad), cos(theta_rad)]])
-    
-    # Rotate wavevectors by angle theta, using rotation matrix 
-    k1 = np.matmul(k1,rotmat)
-    k2 = np.matmul(k2,rotmat)
+    rotmat = np.array([[cos(theta_rad), -sin(theta_rad)], 
+                       [sin(theta_rad), cos(theta_rad)]])
+
+    if strain_frame == "Global image axes":
+        # rotate first then apply strain along global x/y
+        k1 = np.matmul(k1_unstrained, rotmat)
+        k2 = np.matmul(k2_unstrained, rotmat)
+
+        # TESTING:
+        k1 = np.matmul(k1, reciprocal_strain)
+        k2 = np.matmul(k2, reciprocal_strain)
+
+        # original
+        # k1 = np.array([k1[0] - e11*k1[0] - e12*k1[1],
+        #                k1[1] - e12*k1[0] - e22*k1[1]])
+
+        # k2 = np.array([k2[0] - e11*k2[0] - e12*k2[1],
+        #                k2[1] - e12*k2[0] - e22*k2[1]])
+        
+    else:
+        # strain along local axes then rotate
+        k1 = np.matmul(k1_strained, rotmat)
+        k2 = np.matmul(k2_strained, rotmat)
+
     
     k1x, k1y = k1[0], k1[1]
     k2x, k2y = k2[0], k2[1]
     
-
-    # # Set amplitudes to plot lattice as honeycomb or dots ... This basically just changes the phase of the atoms 
+    # Set amplitudes to plot lattice as honeycomb or dots ... This basically just changes the phase of the atoms 
     # if honeycomb == 1:
     #     A = 1/2
     #     B = -1/4
@@ -82,12 +130,10 @@ def squareatoms(pix, L, a, theta, e11, e12, e22, center):
     # These amplitudes normalize the image
     A = 1/2
     B = 1/4
-    
-    # Create square lattice
-    Z = A + B * (cos(k1x*(X-X0) + k1y*(Y-Y0)) + cos(k2x*(X-X0) + k2y*(Y-Y0)))
 
-    # FFT of lattice:
-    fftZ = np.abs(npf.fftshift(npf.fft2(Z- np.mean(np.mean(Z)))))  # subtract by mean(mean(Z)) to remove the strong peak at k=0 (DC/constant background)
+    Z = A + B * (
+        np.cos(k1x*(X - X0) + k1y*(Y - Y0)) +
+        np.cos(k2x*(X - X0) + k2y*(Y - Y0))
+    )
 
-
-    return Z, fftZ
+    return Z
