@@ -68,7 +68,7 @@ class Window(QMainWindow):
     ## Tried to change the numbers here to change the size of the window but it doesnt work?
     def initGeo(self): 
         # Set geometry of popup gui window
-        self.setGeometry(100, 100, 1250,500)#self.width(),self.height())#1200, 850)
+        self.setGeometry(100, 100, 1250,800)#self.width(),self.height())#1200, 850)
         # self.setStyleSheet("background: gray;") # Change color of background in window
         # self.setStyleSheet("color:red") # Change color of allll the displayed text in the gui
         # self.setStyleSheet("color: magenta;background: gray")
@@ -91,58 +91,147 @@ class Window(QMainWindow):
         # SYNTAX for adding widget to gui:
         #(addWidget(QWidget, int r, int c, int rowspan, int columnspan)) ---  Adds widget at specified row and column and having specified width and/or height
         #grid.addWidget(row, column, width, height)
-        
-        grid = QGridLayout()
-        grid.setSpacing(11)
 
-        # Settings for all lattices
-        grid.addWidget(self.SimWidget.initMoireBtn(), 0, 1)
-        grid.addWidget(self.SimWidget.initOutputTabs(), 1, 1)
-        # grid.addWidget(self.SimWidget.initSpotifyButton(),9, 0, 1,1)
+        # build each existing widget once so the layout can place it in the appropriate section
+        moireModelWidget = self.SimWidget.initMoireBtn()
+        outputWidget = self.SimWidget.initOutputTabs()
+        imageParametersWidget = self.SimWidget.initImageParameters()
+        filteringWidget = self.SimWidget.initFiltering()
+        timeEstimatorWidget = self.SimWidget.initTimeEstimatorTabs()
+        moireCalculatorWidget = self.SimWidget.initMoireCalcWidget()
+        moireCalculatorWidget.setMinimumWidth(350)
 
-        grid.addWidget(self.SimWidget.initImageParameters(), 0, 2, 2, 1)
-
-        grid.addWidget(self.SimWidget.initFiltering(), 0, 3)
-        grid.addWidget(self.SimWidget.initTimeEstimatorTabs(), 1, 3)
-
-        # Add moire calculator widget
-        grid.addWidget(self.SimWidget.initMoireCalcWidget(), 0, 4, 2, 1)
-
-        # Settings for first lattice
-        # grid.addWidget(self.SimWidget.initLattice1Parameters(), 0, 0, 3, 1)
-
-        # # Settings for second lattice
-        # grid.addWidget(self.SimWidget.initLattice2Parameters(), 3, 0, 3, 1)
-
-        # # Lattice 3 parameters
-        # grid.addWidget(self.SimWidget.initLattice3Parameters(), 6, 0, 3, 1)
-
-        # settings for first lattice
+        # build the three lattice panels before creating the plot
         lattice1Widget = self.SimWidget.initLattice1Parameters()
-
-        # settings for second lattice
         lattice2Widget = self.SimWidget.initLattice2Parameters()
-
-        # settings for third lattice
         lattice3Widget = self.SimWidget.initLattice3Parameters()
 
-        # make all three lattice panels the same height
+        # create matplotlib last because initmatplotlibfig() immediately calls plotatoms which controls the initialized things above
+        plotWidget = self.SimWidget.initMatplotlibFig()
+
+        # keep the lattice panels consistent without forcing the whole window to be tall enough to display all three at once
         latticeHeight = 280
         lattice1Widget.setFixedHeight(latticeHeight)
         lattice2Widget.setFixedHeight(latticeHeight)
         lattice3Widget.setFixedHeight(latticeHeight)
 
-        grid.addWidget(lattice1Widget, 0, 0, 3, 1)
-        grid.addWidget(lattice2Widget, 3, 0, 3, 1)
-        grid.addWidget(lattice3Widget, 6, 0, 3, 1)
+        # left side vertically scrollable lattice controls
+        self.latticeControlsContainer = QWidget()
+        latticeLayout = QVBoxLayout(self.latticeControlsContainer)
+        latticeLayout.setContentsMargins(4, 4, 4, 4)
+        latticeLayout.setSpacing(11)
+        latticeLayout.addWidget(lattice1Widget)
+        latticeLayout.addWidget(lattice2Widget)
+        latticeLayout.addWidget(lattice3Widget)
+        latticeLayout.addStretch(1)
 
-        # Add matplotlib fig/toolbar to gui
-        grid.addWidget(self.SimWidget.initMatplotlibFig(), 2, 1, 8, 4) # Make the matplotlib canvas/figure the largest widget
-                
+        # preserve the controls' natural size -> when the viewport is smaller, QScrollArea will show
+        # scrollbars instead of squashing all the controls
+        self.latticeControlsContainer.adjustSize()
+        self.latticeControlsContainer.setMinimumSize(self.latticeControlsContainer.sizeHint())
+
+        self.latticeScrollArea = QScrollArea()
+        self.latticeScrollArea.setWidgetResizable(True)
+        self.latticeScrollArea.setWidget(self.latticeControlsContainer)
+        self.latticeScrollArea.setFrameShape(QFrame.NoFrame)
+        self.latticeScrollArea.setSizeAdjustPolicy(QAbstractScrollArea.AdjustIgnored)
+        self.latticeScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.latticeScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.latticeScrollArea.setMinimumWidth(280)
+
+        # top right section -> all global controls in one area that can scroll in both directions
+        # when the window is too small
+        self.topControlsContainer = QWidget()
+        topGrid = QGridLayout(self.topControlsContainer)
+        topGrid.setContentsMargins(4, 4, 4, 4)
+        topGrid.setHorizontalSpacing(11)
+        topGrid.setVerticalSpacing(11)
+
+        topGrid.addWidget(moireModelWidget, 0, 0)
+        topGrid.addWidget(outputWidget, 1, 0)
+        topGrid.addWidget(imageParametersWidget, 0, 1, 2, 1)
+        topGrid.addWidget(filteringWidget, 0, 2)
+        topGrid.addWidget(timeEstimatorWidget, 1, 2)
+        topGrid.addWidget(moireCalculatorWidget, 0, 3, 2, 1)
+
+        # any extra room goes to blank space instead of stretching the control boxes
+        topGrid.setColumnStretch(4, 1)
+        topGrid.setRowStretch(2, 1)
+
+        self.topControlsContainer.adjustSize()
+        self.topControlsContainer.setMinimumSize(self.topControlsContainer.sizeHint())
+
+        self.topControlsScrollArea = QScrollArea()
+        self.topControlsScrollArea.setWidgetResizable(True)
+        self.topControlsScrollArea.setWidget(self.topControlsContainer)
+        self.topControlsScrollArea.setFrameShape(QFrame.NoFrame)
+        self.topControlsScrollArea.setSizeAdjustPolicy(QAbstractScrollArea.AdjustIgnored)
+        self.topControlsScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.topControlsScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.topControlsScrollArea.setMinimumWidth(160)
+
+        # dont let the top section grow taller than the height required to show all of its controls
+        # any additional window height should go to matplotlib instead!
+        horizontalBarHeight = self.topControlsScrollArea.horizontalScrollBar().sizeHint().height()
+        self.topControlsPreferredHeight = self.topControlsContainer.sizeHint().height() + horizontalBarHeight + 16
+        self.topControlsScrollArea.setMaximumHeight(self.topControlsPreferredHeight)
+
+        # matplotlib stays outside both scroll areas so its toolbar, zooming, etc are unaffected
+        plotWidget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        plotWidget.setMinimumSize(0, 220)
+        self.SimWidget.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.SimWidget.canvas.setMinimumSize(0, 0)
+
+        # right side -> draggable divider between the scrollable controls and teh expanding matplotlib figure
+        self.rightSplitter = QSplitter(Qt.Vertical)
+        self.rightSplitter.setChildrenCollapsible(False)
+        self.rightSplitter.setHandleWidth(6)
+        self.rightSplitter.addWidget(self.topControlsScrollArea)
+        self.rightSplitter.addWidget(plotWidget)
+
+        # both sections share added height when the wndow is enlarged (until the controls reach their max height)
+        self.rightSplitter.setStretchFactor(0, 2)
+        self.rightSplitter.setStretchFactor(1, 3)
+
+        # entire window has a draggable divider between lattice controls and the right side
+        self.mainSplitter = QSplitter(Qt.Horizontal)
+        self.mainSplitter.setChildrenCollapsible(False)
+        self.mainSplitter.setHandleWidth(6)
+        self.mainSplitter.addWidget(self.latticeScrollArea)
+        self.mainSplitter.addWidget(self.rightSplitter)
+        self.mainSplitter.setStretchFactor(0, 0)
+        self.mainSplitter.setStretchFactor(1, 1)
+
         centralWidget = QWidget()
-        centralWidget.setLayout(grid)
-        self.setCentralWidget(centralWidget) # Set the central widget of the window to be the centralWidget that we just defined, which is a QWidget with a grid layout of all the other
+        centralLayout = QHBoxLayout(centralWidget)
+        centralLayout.setContentsMargins(4, 4, 4, 4)
+        centralLayout.addWidget(self.mainSplitter)
+        self.setCentralWidget(centralWidget)
+
+        # wait until Qt knows the windows real on-screen dimensions before choosing the starting splitter positions
+        QTimer.singleShot(0, self.setInitialSplitterSizes)
+
+    def setInitialSplitterSizes(self):
+        # give the lattice column enough width for its natural layout BUT dont let it
+        # consume a big fraction of a small screen
+        totalWidth = max(self.mainSplitter.width(), 1)
+        latticeHint = self.latticeControlsContainer.sizeHint().width()
+        scrollBarWidth = self.latticeScrollArea.verticalScrollBar().sizeHint().width()
+        preferredLatticeWidth = latticeHint + scrollBarWidth + 8
+        maximumLatticeWidth = max(280, int(totalWidth * 0.32))
+        latticeWidth = max(280, min(preferredLatticeWidth, maximumLatticeWidth))
+        self.mainSplitter.setSizes([latticeWidth, max(totalWidth - latticeWidth, 1)])
+
+        # show the full top controls when the scree is tall enough. on a shorter display
+        # limit them to about 35 % of the right workspace so the most height goes to the plots
+        totalHeight = max(self.rightSplitter.height(), 1)
+        maximumControlsHeight = max(200, int(totalHeight * 0.35))
+        controlsHeight = max(180, min(self.topControlsPreferredHeight, maximumControlsHeight))
+        self.rightSplitter.setSizes([controlsHeight, max(totalHeight - controlsHeight, 1)])
+
         
+
+
 
     # Overriding keyPressEvent so that if the escape button is pressed, it doesn't automatically close the program
     def keyPressEvent(self, event):
