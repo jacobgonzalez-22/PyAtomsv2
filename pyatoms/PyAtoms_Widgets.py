@@ -53,10 +53,10 @@ from scipy.ndimage import gaussian_filter
 
 import traceback
 
-from hexatoms import hexatoms, evaluateHexLatticeAtCoords
-from squareatoms import squareatoms, evaluateSquareLatticeAtCoords
-from stripes import stripes, evaluateStripesAtCoords
-from moirelattice import moirelattice, calculateMoireWavelength, calculateMoireTwistAngle, calculateMoireLatticeConstant, calculateMixedMoireComponents
+from .hexatoms import hexatoms, evaluateHexLatticeAtCoords
+from .squareatoms import squareatoms, evaluateSquareLatticeAtCoords
+from .stripes import stripes, evaluateStripesAtCoords
+from .moirelattice import moirelattice, calculateMoireWavelength, calculateMoireTwistAngle, calculateMoireLatticeConstant, calculateMixedMoireComponents
 
 # Unicode chart for greek letters: https://unicode.org/charts/PDF/U0370.pdf
 # type '\u[CODE]'. Example: for alpha, it says 03B1, so type '\u03b1'

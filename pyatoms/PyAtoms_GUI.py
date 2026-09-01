@@ -32,10 +32,10 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 
 # IMPORT OTHER FILES:
-from PyAtoms_Widgets import SimulatorWidget
-from hexatoms import hexatoms
-from squareatoms import squareatoms
-from moirelattice import moirelattice
+from .PyAtoms_Widgets import SimulatorWidget
+from .hexatoms import hexatoms
+from .squareatoms import squareatoms
+from .moirelattice import moirelattice
 
 
 # main window

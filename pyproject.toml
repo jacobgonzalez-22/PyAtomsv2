@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyatoms-spm"
+version = "1.0.0"
+description = "A graphical simulator for scanning probe microscopy images and atomic lattices."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Christopher Gutiérrez", email = "gutierrez@physics.ucla.edu"},
+    {name = "Asari G. Prado"},
+    {name = "Jacob González"}
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "PyQt5"
+]
+
+[project.urls]
+Homepage = "https://github.com/GutierrezPhys/PyAtoms"
+Repository = "https://github.com/GutierrezPhys/PyAtoms"
+Issues = "https://github.com/GutierrezPhys/PyAtoms"
+
+[project.scripts]
+pyatoms = "pyatoms.PyAtoms_GUI:main"
+
+[tool.setuptools]
+packages = ["pyatoms"]
+
+[tool.setuptools.package-data]
+pyatoms = ["*.png", "*.ico"]

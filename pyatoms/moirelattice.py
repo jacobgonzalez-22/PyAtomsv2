@@ -22,9 +22,9 @@ from numpy import minimum as minn
 from numpy import maximum as maxx 
 from scipy.ndimage import gaussian_filter
 
-from hexatoms import hexatoms
-from squareatoms import squareatoms
-from stripes import stripes
+from .hexatoms import hexatoms
+from .squareatoms import squareatoms
+from .stripes import stripes
 
 
 def moirelattice(pix, L, a1, a2, a3, moireBtn, modeBtn, lattice1, lattice2, lattice3, theta_offset, theta_tw, theta_tw2, e11, e12, e22, d11, d12, d22, f11, f12, f22,  alpha1, beta1, alpha2, beta2, alpha3, beta3, eta, xi, origin1, origin2, origin3, filter_bool, sigma,center, strain1_frame = "Local lattice axes", strain2_frame = "Local lattice axes", strain3_frame = "Local lattice axes"):
