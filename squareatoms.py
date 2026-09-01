@@ -51,7 +51,7 @@ def squareatoms(pix, L, a, theta, e11, e12, e22, center, strain_frame = "Local l
 
     # FFT of lattice:
     fftZ = np.abs(npf.fftshift(npf.fft2(Z- np.mean(np.mean(Z)))))  # subtract by mean(mean(Z)) to remove the strong peak at k=0 (DC/constant background)
-
+    fftZ = mat2gray(fftZ)
 
     return Z, fftZ
 
@@ -118,22 +118,23 @@ def evaluateSquareLatticeAtCoords(X, Y, a, theta, e11, e12, e22, center, strain_
     k1x, k1y = k1[0], k1[1]
     k2x, k2y = k2[0], k2[1]
     
-    # Set amplitudes to plot lattice as honeycomb or dots ... This basically just changes the phase of the atoms 
-    # if honeycomb == 1:
-    #     A = 1/2
-    #     B = -1/4
-    # else:
-    #     A = 1/2
-    #     B = 1/4
-
-    # removing honeycomb dependence, clean up code later
-    # These amplitudes normalize the image
-    A = 1/2
-    B = 1/4
-
-    Z = A + B * (
-        np.cos(k1x*(X - X0) + k1y*(Y - Y0)) +
-        np.cos(k2x*(X - X0) + k2y*(Y - Y0))
+    # create unnormalized square lattice
+    Z_un = (
+        np.cos(k1x*(X-X0) + k1y*(Y-Y0)) +
+        np.cos(k2x*(X-X0) + k2y*(Y-Y0))
     )
 
+    # normalize image so values are between 0 and 1
+    Z = mat2gray(Z_un)
+
     return Z
+
+# explicit function to normalize the 2D maatrix
+def mat2gray(Z_un):
+    Z_min = np.min(Z_un)
+    Z_max = np.max(Z_un)
+
+    if Z_max == Z_min:
+        return np.zeros_like(Z_un)
+
+    return (Z_un - Z_min) / (Z_max - Z_min)

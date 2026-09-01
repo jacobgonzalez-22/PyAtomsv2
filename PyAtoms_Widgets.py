@@ -55,6 +55,7 @@ import traceback
 
 from hexatoms import hexatoms, evaluateHexLatticeAtCoords
 from squareatoms import squareatoms, evaluateSquareLatticeAtCoords
+from stripes import stripes, evaluateStripesAtCoords
 from moirelattice import moirelattice, calculateMoireWavelength, calculateMoireTwistAngle, calculateMoireLatticeConstant, calculateMixedMoireComponents
 
 # Unicode chart for greek letters: https://unicode.org/charts/PDF/U0370.pdf
@@ -358,6 +359,9 @@ class SimulatorWidget(QWidget):
 
 		elif lattice_type == 'Square':
 			return evaluateSquareLatticeAtCoords(X, Y, a, theta, e11, e12, e22, self.center, strain_frame)
+
+		elif lattice_type == 'Stripes':
+			return evaluateStripesAtCoords(X, Y, a, theta, e11, e12, e22, self.center, strain_frame)
 
 		else:
 			return np.zeros_like(X)
@@ -1617,17 +1621,22 @@ class SimulatorWidget(QWidget):
 			else:
 				self.moire_wavelength13_display.setText(f"{wavelength13:.3f}")
 
-		# Collect mixed square-hexagonal results separately because
+		# Collect mixed lattice results separately because
 		# one scalar wavelength does not fully describe a mixed pair.
 		mixed_results = []
 
 		def addMixedPairResults(pair_name, lattice_type1, lattice_type2, lattice_constant1, lattice_constant2, twist_angle):
 			"""
 			Add the longest first-shell components when the pair
-			contains one square and one hexagonal lattice.
+			contains different lattice types.
 			"""
 
 			if lattice_type1 == lattice_type2:
+				return
+
+			supported_types = ("Hexagonal", "Square", "Stripes")
+
+			if lattice_type1 not in supported_types or lattice_type2 not in supported_types:
 				return
 
 			components = calculateMixedMoireComponents(lattice_type1, lattice_type2, lattice_constant1, lattice_constant2, twist_angle, number_of_components=3)
@@ -2086,22 +2095,29 @@ class SimulatorWidget(QWidget):
 		self.symm_label.setToolTip("Choose symmetry of first lattice")
 		self.hex1btn = QRadioButton("Triangular/Hexagonal")
 		self.sq1btn = QRadioButton("Square")
+		self.stripe1btn = QRadioButton("Stripes")
+
 		self.hex1btn.setChecked(True)
+
 		self.hex1btn.setToolTip("Create triangular/hexagonal lattice")
 		self.sq1btn.setToolTip("Create square lattice")
+		self.stripe1btn.setToolTip("Create a one-dimensional periodic stripe modulation")
 
 		# Connect btn to update functions when clicked https://www.tutorialspoint.com/pyqt/pyqt_qpushbutton_widget.htm
 		self.hex1btn.toggled.connect(self.updateLattice1)
 		self.sq1btn.toggled.connect(self.updateLattice1)
+		self.stripe1btn.toggled.connect(self.updateLattice1)
 
 		# Create QButtonGroup to be mutually exclusive w the honeycomb buttons, from https://www.programcreek.com/python/example/108083/PyQt5.QtWidgets.QButtonGroup
 		self.symm_btn_group = QButtonGroup(self)
 		self.symm_btn_group.addButton(self.hex1btn)
 		self.symm_btn_group.addButton(self.sq1btn)
+		self.symm_btn_group.addButton(self.stripe1btn)
 
 		h1box = QHBoxLayout(self)
 		h1box.addWidget(self.hex1btn)
 		h1box.addWidget(self.sq1btn)
+		h1box.addWidget(self.stripe1btn)
 
 		# Add symmetry button widgets
 		self.tab1a.layout = QVBoxLayout(self)
@@ -2112,13 +2128,13 @@ class SimulatorWidget(QWidget):
 		# # # # # # # # # # # # # # # # # # # # 
 		### Pick lattice 1 periodicity a ###
 		self.a_param_label = QLabel("Lattice constant (nm)", self)
-		self.a_param_label.setToolTip("Periodicity of 1st lattice (spacing between atoms) in nm")
+		self.a_param_label.setToolTip("Periodicity of 1st lattice (spacing between atoms) or stripe modulation in nm")
 		self.a_label = QLabel("a:", self)
-		self.a_label.setToolTip("Periodicity of 1st lattice (spacing between atoms) in nm")
+		self.a_label.setToolTip("Periodicity of 1st lattice (spacing between atoms) or stripe modulation in nm")
 		self.a_input = QLineEdit(self)
 		self.a_input.returnPressed.connect(self.update_a) # Connect this intput dialog whenever the enter/return/tab button is pressed or you click away from the widget box
 		self.a_input.setPlaceholderText(str(self.a))
-		self.a_input.setToolTip("Periodicity of 1st lattice (spacing between atoms) in nm")
+		self.a_input.setToolTip("Periodicity of 1st lattice (spacing between atoms) or stripe modulation in nm")
 		self.a_input.setMinimumWidth(85)
 
 		# Define label to display the value of the slider next to the slider
@@ -2391,22 +2407,29 @@ class SimulatorWidget(QWidget):
 		self.symm_label.setToolTip("Choose symmetry of second lattice")
 		self.hex2btn = QRadioButton("Triangular/Hexagonal")
 		self.sq2btn = QRadioButton("Square")
+		self.stripe2btn = QRadioButton("Stripes")
+
 		self.hex2btn.setChecked(True)
+
 		self.hex2btn.setToolTip("Create triangular/hexagonal lattice")
 		self.sq2btn.setToolTip("Create square lattice")
+		self.stripe2btn.setToolTip("Create a one-dimensional periodic stripe modulation")
 
 		# Connect btn to update functions when clicked https://www.tutorialspoint.com/pyqt/pyqt_qpushbutton_widget.htm
 		self.hex2btn.toggled.connect(self.updateLattice2)
 		self.sq2btn.toggled.connect(self.updateLattice2)
+		self.stripe2btn.toggled.connect(self.updateLattice2)
 
 		# Create QButtonGroup to be mutually exclusive w the honeycomb buttons, from https://www.programcreek.com/python/example/108083/PyQt5.QtWidgets.QButtonGroup
 		self.symm2_btn_group = QButtonGroup(self)
 		self.symm2_btn_group.addButton(self.hex2btn)
 		self.symm2_btn_group.addButton(self.sq2btn)
+		self.symm2_btn_group.addButton(self.stripe2btn)
 
 		h1box = QHBoxLayout(self)
 		h1box.addWidget(self.hex2btn)
 		h1box.addWidget(self.sq2btn)
+		h1box.addWidget(self.stripe2btn)
 
 		# Add symmetry button widgets to tab
 		self.tab1b.layout = QVBoxLayout(self)
@@ -2422,9 +2445,9 @@ class SimulatorWidget(QWidget):
 		self.b_input = QLineEdit(self)
 		self.b_input.returnPressed.connect(self.update_b) # Connect this intput dialog whenever the enter/return button is pressed
 		self.b_input.setPlaceholderText(str(self.b))
-		self.b_param_label.setToolTip("Periodicity of 2nd lattice (spacing between atoms) in nm")
-		self.b_label.setToolTip("Periodicity of 2nd lattice (spacing between atoms) in nm")
-		self.b_input.setToolTip("Periodicity of 2nd lattice (spacing between atoms) in nm")
+		self.b_param_label.setToolTip("Periodicity of 2nd lattice (spacing between atoms) or stripe modulation in nm")
+		self.b_label.setToolTip("Periodicity of 2nd lattice (spacing between atoms) or stripe modulation in nm")
+		self.b_input.setToolTip("Periodicity of 2nd lattice (spacing between atoms) or stripe modulation in nm")
 
 		self.b_input.setMinimumWidth(85)
 
@@ -2724,22 +2747,29 @@ class SimulatorWidget(QWidget):
 		self.symm_label.setToolTip("Choose symmetry of third lattice")
 		self.hex3btn = QRadioButton("Triangular/Hexagonal")
 		self.sq3btn = QRadioButton("Square")
+		self.stripe3btn = QRadioButton("Stripes")
+
 		self.hex3btn.setChecked(True)
+
 		self.hex3btn.setToolTip("Create triangular/hexagonal lattice")
 		self.sq3btn.setToolTip("Create square lattice")
+		self.stripe3btn.setToolTip("Create a one-dimensional periodic stripe modulation")
 
 		# Connect btn to update functions when clicked https://www.tutorialspoint.com/pyqt/pyqt_qpushbutton_widget.htm
 		self.hex3btn.toggled.connect(self.updateLattice3)
 		self.sq3btn.toggled.connect(self.updateLattice3)
+		self.stripe3btn.toggled.connect(self.updateLattice3)
 
 		# Create QButtonGroup to be mutually exclusive w the honeycomb buttons, from https://www.programcreek.com/python/example/108083/PyQt5.QtWidgets.QButtonGroup
 		self.symm3_btn_group = QButtonGroup(self)
 		self.symm3_btn_group.addButton(self.hex3btn)
 		self.symm3_btn_group.addButton(self.sq3btn)
+		self.symm3_btn_group.addButton(self.stripe3btn)
 
 		h1box = QHBoxLayout(self)
 		h1box.addWidget(self.hex3btn)
 		h1box.addWidget(self.sq3btn)
+		h1box.addWidget(self.stripe3btn)
 
 		# Add symmetry button widgets to tab
 		self.tab1c.layout = QVBoxLayout(self)
@@ -2756,9 +2786,9 @@ class SimulatorWidget(QWidget):
 		self.c_input.returnPressed.connect(self.update_c) # Connect this intput dialog whenever the enter/return button is pressed
 		self.c_input.setPlaceholderText(str(self.c))
 		self.c_input.setMinimumWidth(85)
-		self.c_param_label.setToolTip("Periodicity of 3rd lattice (spacing between atoms) in nm")
-		self.c_label.setToolTip("Periodicity of 3rd lattice (spacing between atoms) in nm")
-		self.c_input.setToolTip("Periodicity of 3rd lattice (spacing between atoms) in nm")
+		self.c_param_label.setToolTip("Periodicity of 3rd lattice (spacing between atoms) or stripe modulation in nm")
+		self.c_label.setToolTip("Periodicity of 3rd lattice (spacing between atoms) or stripe modulation in nm")
+		self.c_input.setToolTip("Periodicity of 3rd lattice (spacing between atoms) or stripe modulation in nm")
 
 		# Define label to display the value of the slider next to the slider
 		self.c_nm_Label = QLabel(" nm", self) # Display the corrected value. only up to 2 decimal pts
@@ -3057,7 +3087,9 @@ class SimulatorWidget(QWidget):
 				self.lattice1 = "Hexagonal"
 			elif radio_btn.text() == "Square":
 				self.lattice1 = "Square"
-		 # Will update lattice1 to "Hexagonal" or "Square" depending on which is clicked
+			elif radio_btn.text() == "Stripes":
+				self.lattice1 = "Stripes"
+		 # Will update lattice1 depending on which is clicked
 		self.updateMoireCalcDisplays()
 		self.plotAtoms()
 		self.harry_counter += 0.5 # because for radio buttons, it runs the code twice for some reason. so add a TOTAL of 1 each time the user changes the radio btn 
@@ -3071,7 +3103,9 @@ class SimulatorWidget(QWidget):
 				self.lattice2 = "Hexagonal"
 			elif radio_btn.text() == "Square":
 				self.lattice2 = "Square"
-		 # Will update lattice2 to "Hexagonal" or "Square" depending on which is clicked
+			elif radio_btn.text() == "Stripes":
+				self.lattice2 = "Stripes"
+		 # Will update lattice2 depending on which is clicked
 		self.updateMoireCalcDisplays()
 		self.plotAtoms()
 		self.harry_counter += 0.5 # because for radio buttons, it runs the code twice for some reason. so add a TOTAL of 1 each time the user changes the radio btn 
@@ -3084,7 +3118,9 @@ class SimulatorWidget(QWidget):
 				self.lattice3 = "Hexagonal"
 			elif radio_btn.text() == "Square":
 				self.lattice3 = "Square"
-		 # Will update lattice3 to "Hexagonal" or "Square" depending on which is clicked
+			elif radio_btn.text() == "Stripes":
+				self.lattice3 = "Stripes"
+		 # Will update lattice3 depending on which is clicked
 		self.updateMoireCalcDisplays()
 		self.plotAtoms()
 		self.harry_counter += 0.5 # because for radio buttons, it runs the code twice for some reason. so add a TOTAL of 1 each time the user changes the radio btn 
@@ -3778,11 +3814,13 @@ class SimulatorWidget(QWidget):
 			self.Z, self.fftZ = moirelattice(self.pix, self.L, self.a, self.b, self.c, self.moireBtn, self.modeBtn, self.lattice1, self.lattice2, self.lattice3, self.theta_im, self.theta_tw, self.theta_tw2, self.e11, self.e12, self.e22, self.d11, self.d12, self.d22, self.f11, self.f12, self.f22, self.alpha1, self.beta1, self.alpha2, self.beta2, self.alpha3, self.beta3, self.eta, self.xi, self.origin1, self.origin2, self.origin3, self.filter_bool, self.sigma, self.center, self.strain1_frame, self.strain2_frame, self.strain3_frame)
 
 		# if moire btn is clicked no, only plot a single lattice using the lattice1 parameters. all lattice2 inputs are ignored
-		else: # if moirebtn is clicked to SINGLE layer, just run hexatoms/squareatoms, 
+		else: # if moirebtn is clicked to SINGLE layer, just run hexatoms/squareatoms/stripes, 
 			if self.lattice1 == 'Hexagonal':
 				self.Z, self.fftZ = hexatoms(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.alpha1, self.beta1, self.origin1, self.center, self.strain1_frame)
 			elif self.lattice1 == 'Square':
 				self.Z, self.fftZ = squareatoms(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.center, self.strain1_frame)
+			elif self.lattice1 == 'Stripes':
+				self.Z, self.fftZ = stripes(self.pix, self.L, self.a, self.theta_im, self.e11, self.e12, self.e22, self.center, self.strain1_frame)
 
 			# Normalize the FFTs to be between 0-1 (bc hexatoms only normalizes Z, moirelattice is what normalizes fftZ, but if you chose single lattice, moirelattice code isnt run. so need to normalize the FFT here)
 			self.fftZ = mat2gray(self.fftZ)
@@ -4207,12 +4245,15 @@ class SimulatorWidget(QWidget):
 
 					set_group_button(self.mode_btn_group, mode_buttons[mode])
 
-			def set_lattice_type(attr_name, group, hex_button, square_button, value):
+			def set_lattice_type(attr_name, group, hex_button, square_button, stripe_button, value):
 				if value == "Hexagonal":
 					button = hex_button
 
 				elif value == "Square":
 					button = square_button
+
+				elif value == "Stripes":
+					button = stripe_button
 
 				else:
 					raise ValueError("unsupported lattice type: " + value)
@@ -4278,7 +4319,7 @@ class SimulatorWidget(QWidget):
 			apply_setting("Sigma (real pix)", float, lambda value: set_attr_and_text("sigma", self.sigma_input, value))
 
 			# lattice 1
-			apply_setting("Lattice 1 type", parse_text, lambda value: set_lattice_type("lattice1", self.symm_btn_group, self.hex1btn, self.sq1btn, value))
+			apply_setting("Lattice 1 type", parse_text, lambda value: set_lattice_type("lattice1", self.symm_btn_group, self.hex1btn, self.sq1btn, self.stripe1btn, value))
 			apply_setting("a (nm)", float, lambda value: set_attr_and_text("a", self.a_input, value))
 
 			# strain is stored internally as a decimal, but the GUI displays percent
@@ -4292,7 +4333,7 @@ class SimulatorWidget(QWidget):
 			apply_setting("Origin1", parse_text, lambda value: set_origin("origin1", self.origin1_group, self.hollowsite1, self.Asite1, self.Bsite1, value))
 
 			# lattice 2
-			apply_setting("Lattice 2 type", parse_text, lambda value: set_lattice_type("lattice2", self.symm2_btn_group, self.hex2btn, self.sq2btn, value))
+			apply_setting("Lattice 2 type", parse_text, lambda value: set_lattice_type("lattice2", self.symm2_btn_group, self.hex2btn, self.sq2btn, self.stripe2btn, value))
 			apply_setting("b (nm)", float, lambda value: set_attr_and_text("b", self.b_input, value))
 
 			apply_setting("d11", float, lambda value: set_attr_and_text("d11", self.d11_input, value, f"{value * 100:g}"))
@@ -4306,7 +4347,7 @@ class SimulatorWidget(QWidget):
 			apply_setting("Twist angle (btwn lattice 1 & 2)", float, lambda value: set_attr_and_text("theta_tw", self.thetatw_input, value))
 
 			# lattice 3
-			apply_setting("Lattice 3 type", parse_text, lambda value: set_lattice_type("lattice3", self.symm3_btn_group, self.hex3btn, self.sq3btn, value))
+			apply_setting("Lattice 3 type", parse_text, lambda value: set_lattice_type("lattice3", self.symm3_btn_group, self.hex3btn, self.sq3btn, self.stripe3btn, value))
 			apply_setting("c (nm)", float, lambda value: set_attr_and_text("c", self.c_input, value))
 
 			apply_setting("f11", float, lambda value: set_attr_and_text("f11", self.f11_input, value, f"{value * 100:g}"))

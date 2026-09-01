@@ -222,10 +222,10 @@ class Window(QMainWindow):
         latticeWidth = max(280, min(preferredLatticeWidth, maximumLatticeWidth))
         self.mainSplitter.setSizes([latticeWidth, max(totalWidth - latticeWidth, 1)])
 
-        # show the full top controls when the scree is tall enough. on a shorter display
+        # show the full top controls when the screen is tall enough. on a shorter display
         # limit them to about 35 % of the right workspace so the most height goes to the plots
         totalHeight = max(self.rightSplitter.height(), 1)
-        maximumControlsHeight = max(200, int(totalHeight * 0.35))
+        maximumControlsHeight = max(200, int(totalHeight * 0.40))
         controlsHeight = max(180, min(self.topControlsPreferredHeight, maximumControlsHeight))
         self.rightSplitter.setSizes([controlsHeight, max(totalHeight - controlsHeight, 1)])
 
