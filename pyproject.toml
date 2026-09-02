@@ -13,7 +13,6 @@ authors = [
     {name = "Asari G. Prado"},
     {name = "Jacob González"}
 ]
-maintaners =
 dependencies = [
     "numpy",
     "scipy",
