@@ -3,6 +3,12 @@
 PyAtoms SIMULATOR WIDGETS
 Created on Mon Nov 15 14:45:06 2021
 @author: Asari
+
+Modification Log
+----------------
+2026-09-02 - Jacob Gonzalez
+	- Replaced direct PyQt5 imports with QtPy compatibility imports
+	- Replaced the Qt5-specific Matplotlib backend with the generic Qt backend
 """
 
 import sys
@@ -37,14 +43,14 @@ from matplotlib.widgets import EllipseSelector
 from matplotlib.patches import Ellipse
 
 # PyQT imports for creating widgets/etc
-from PyQt5.QtWidgets import *#QApplication, QCheckBox, QFileDialog, QMessageBox, QWidget, QLabel, QButtonGroup, QPushButton, QSpinBox, QMenu, QComboBox, QMainWindow, QHBoxLayout, QVBoxLayout, QSlider, QGroupBox, QGridLayout, QRadioButton, QDialog, QLineEdit, QInputDialog, QToolTip
-from PyQt5.QtCore import *#Qt
-from PyQt5.QtGui import *#QPainter, QColor, QAction
+from qtpy.QtWidgets import *#QApplication, QCheckBox, QFileDialog, QMessageBox, QWidget, QLabel, QButtonGroup, QPushButton, QSpinBox, QMenu, QComboBox, QMainWindow, QHBoxLayout, QVBoxLayout, QSlider, QGroupBox, QGridLayout, QRadioButton, QDialog, QLineEdit, QInputDialog, QToolTip
+from qtpy.QtCore import *#Qt
+from qtpy.QtGui import *#QPainter, QColor, QAction
 
 
 # THESE TWO ARE FOR EMBEDDING MATPLOTLIB PLOTS INTO PYQT5 GUIs
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 # FigureCanvasQTAgg: It will provide the canvas for the figure
 # NavigationToolbar2QT: It will provide the tool bar for the matplotlib figs (zooming in, panning, saving image, etc)
 # https://www.geeksforgeeks.org/how-to-embed-matplotlib-graph-in-pyqt5/
@@ -261,7 +267,7 @@ class SimulatorWidget(QWidget):
 		self.fast_scan_dropdown.addItems(["Horizontal", "Vertical"])
 		self.fast_scan_dropdown.setCurrentText(self.fast_scan_direction)
 		 
-		self.fast_scan_dropdown.activated[str].connect(self.updateDriftSettings)
+		self.fast_scan_dropdown.currentTextChanged.connect(self.updateDriftSettings)
 		
 		hbox_fast = QHBoxLayout()
 		hbox_fast.addWidget(self.fast_scan_label)
@@ -3687,7 +3693,7 @@ class SimulatorWidget(QWidget):
 		self.colormap_RS = self.dropdownColormap_RS.currentText()
 
 		# To update which text appears in the coombo box to the chosen text from the dropdown/combo list
-		self.dropdownColormap_RS.activated[str].connect(self.updateColormap)
+		self.dropdownColormap_RS.currentTextChanged.connect(self.updateColormap)
 
 
 		# Add a dropdown list to choose colormap to use for plotting the REAL SPACE image
@@ -3702,7 +3708,7 @@ class SimulatorWidget(QWidget):
 		self.colormap_FFT = self.dropdownColormap_FFT.currentText()
 
 		# To update which text appears in the coombo box to the chosen text from the dropdown/combo list
-		self.dropdownColormap_FFT.activated[str].connect(self.updateColormap)
+		self.dropdownColormap_FFT.currentTextChanged.connect(self.updateColormap)
 
 
 		vlayout = QVBoxLayout()

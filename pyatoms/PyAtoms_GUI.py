@@ -3,6 +3,12 @@
 PYATOMS ATOM SIMULATOR
 Created on Mon Nov 15 14:45:06 2021
 @author: Asari
+
+Modification Log
+----------------
+2026-09-02 - Jacob Gonzalez
+    - Replaced direct PyQt5 imports with QtPy compatibility imports
+    - Replaced the Qt5-specific Matplotlib backend with the generic Qt backend
 """
 
 import sys
@@ -16,14 +22,14 @@ from matplotlib.gridspec import GridSpec
 import matplotlib.pyplot as plt
 
 # PyQT imports for creating widgets/etc
-from PyQt5.QtWidgets import * #QApplication, QSplashScreen, QProgressBar, QWidget, QLabel, QPushButton, QSpinBox, QMenu, QComboBox, QMainWindow, QHBoxLayout, QVBoxLayout, QSlider, QGroupBox, QGridLayout, QRadioButton, QDialog, QLineEdit, QInputDialog
-from PyQt5.QtCore import * #Qt
-from PyQt5.QtGui import * #QPainter, QColor, QPixmap, QFont
+from qtpy.QtWidgets import * #QApplication, QSplashScreen, QProgressBar, QWidget, QLabel, QPushButton, QSpinBox, QMenu, QComboBox, QMainWindow, QHBoxLayout, QVBoxLayout, QSlider, QGroupBox, QGridLayout, QRadioButton, QDialog, QLineEdit, QInputDialog
+from qtpy.QtCore import * #Qt
+from qtpy.QtGui import * #QPainter, QColor, QPixmap, QFont
 
 
 # THESE TWO ARE FOR EMBEDDING MATPLOTLIB PLOTS INTO PYQT5 GUIs
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 # FigureCanvasQTAgg : It will provide the canvas for the figure
 # NavigationToolbar2QT : It will provide the tool bar for the matplotlib figs (zooming in, panning, saving image, etc)
 # https://www.geeksforgeeks.org/how-to-embed-matplotlib-graph-in-pyqt5/
