@@ -7,8 +7,9 @@ Created on Mon Nov 15 14:45:06 2021
 Modification Log
 ----------------
 2026-09-02 - Jacob Gonzalez
-	- Replaced direct PyQt5 imports with QtPy compatibility imports
+	- Added PyQt5/PyQt6 compatibility through QtPy
 	- Replaced the Qt5-specific Matplotlib backend with the generic Qt backend
+	- Updated QComboBox signal connections for PyQt5/PyQt6 compatibility
 """
 
 import sys
