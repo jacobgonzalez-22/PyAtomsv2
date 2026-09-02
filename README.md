@@ -14,20 +14,88 @@ Simulates scanning probe microscopy (SPM) images. Please read our preprint descr
 - NumPy
 - Matplotlib
 - SciPy
-- PyQt5 
+- QtPy
+- PyQt5 or PyQt6
 
-## Installation instructions - Mac OS and Windows.
-1. Download PyAtoms folder (via Code-> Download .zip)
-2. Open terminal (Mac OSX) or command line (Windows).
-3. Navigate to the directory where the PyAtoms folder is located. Example:
+PyAtoms is compatible with both PyQt5 and PyQt6 through QtPy. PyQt6 is installed by default when PyAtoms is installed using pip.
+
+## Installation instructions - macOS and WIndows
+
+### Install with pip
+
+PyAtoms can be installed using pip:
+
+```bash
+pip install pyatoms-spm
+```
+
+After installation, launch PyAtoms by typing:
+
+```bash
+pyatoms
+```
+
+### Run from source
+
+PyAtoms can also be run directly from the source code.
+
+1. Click the green **Code** button at the top of this GitHub page and select **Download ZIP**.
+
+2. Extract the downloaded ZIP file.
+
+3. Open a terminal or command line:
+    - **Windows:** open Command Prompt, PowerShell, or the Anaconda Prompt.
+    - **macOS:** open the Terminal application.
+
+4. In the terminal, navigate to the extracted PyAtoms folder.
+
+    If the ZIP was extracted into your Downloads folder, you can usually use:
+
+    **Windows Command Prompt:**
+    
+    ```bash
+    cd %USERPROFILE%\Downloads\PyAtoms-main
     ```
-    ~/Downloads/PyAtoms
+
+    **Wndows PowerShell:**
+
+    ```powershell
+    cd "$HOME\Downloads\PyAtoms-main"
     ```
-5. To run program, type: 
+
+    **macOS:**
+    
+    ```bash
+    cd ~/Downloads/PyAtoms-main
     ```
-    python PyAtoms_GUI.py
+
+    If you extracted the folder somewhere else, replace the path above with the location of your extracted PyAtoms folder.
+
+5. Install the required Python packages.
+
+    For PyQt6:
+
+    ```bash
+    python -m pip install numpy scipy matplotlib QtPy PyQt6
     ```
+
+    Or, if you use PyQt5:
+
+    ```bash
+    python -m pip install numpy scipy matplotlib QtPy PyQt5
+    ```
+
+6. From inside the extracted PyAtoms folder, start PyAtoms with:
+
+    ```bash
+    python -m pyatoms.PyAtoms_GUI
+    ```
+
+PyAtoms is compatile with both PyQt5 and PyQt6 through QtPy.
+
 ## Known issues
+
+02-Sep-2026: Pyatoms is compatile with both PyQt5 and PyQt6 through QtPy. PyQt6 is installed by default when installing PyAtoms through pip.
 
 06-Nov-2025: PyAtoms is currently **not** compatible with PyQt 6. Still compatible with latest PyQt5 (5.15.11)
 
