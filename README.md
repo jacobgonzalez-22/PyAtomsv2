@@ -10,7 +10,7 @@ Simulates scanning probe microscopy (SPM) images. Please read our preprint descr
 
 
 ### Dependencies:
-- Python 3
+- Python 3.0 or newer
 - NumPy
 - Matplotlib
 - SciPy
