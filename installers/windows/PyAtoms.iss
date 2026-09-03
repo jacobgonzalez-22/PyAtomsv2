@@ -1,3 +1,12 @@
+; PyAtoms Windows Installer 
+; Created on Wed Sep 02 17:38:41 PM
+; @author: Jacob
+;
+; Modification Log
+; ------------------
+; 2026-09-02 - Jacob Gonzalez
+;   - Added Inno Setup configuration for standalne Windows installation
+
 #define MyAppName "PyAtoms"
 #define MyAppVersion "1.0.2"
 #define MyAppExeName "PyAtoms.exe"
