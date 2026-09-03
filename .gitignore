@@ -3,7 +3,14 @@ build/
 dist/
 __pycache__/
 *.pyc
+
 .DS_Store
+
 standalone_build/
 standalone_dist/
 installer_output/
+
+macos_build/
+macos_dist/
+dmg_staging/
+macos_installer_output/
