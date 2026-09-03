@@ -4,3 +4,5 @@ dist/
 __pycache__/
 *.pyc
 .DS_Store
+standalone_build/
+standalone_dist/
