@@ -6,3 +6,4 @@ __pycache__/
 .DS_Store
 standalone_build/
 standalone_dist/
+installer_output/
