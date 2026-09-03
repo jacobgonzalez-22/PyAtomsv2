@@ -4,11 +4,14 @@
 ;
 ; Modification Log
 ; ------------------
+; 2026-09-03 - Jacob Gonzalez
+;   - Updated installer version to 1.0.3
+;
 ; 2026-09-02 - Jacob Gonzalez
 ;   - Added Inno Setup configuration for standalne Windows installation
 
 #define MyAppName "PyAtoms"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.3"
 #define MyAppExeName "PyAtoms.exe"
 
 [Setup]

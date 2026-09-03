@@ -6,6 +6,10 @@ Created on Mon Nov 15 14:45:06 2021
 
 Modification Log
 ----------------
+2026-09-03 - Jacob Gonzalez
+	- Stabilized Matplotlib plot geometry by disabling all the tight_layout() calls -> they were causing the real-space and FFT plots to shift between redraws
+	- Updated the raw STM drift coordinate grid to match the standard lattice sampling grid, which eliminated a half-pixel offset between undrifted and zero drift images
+
 2026-09-02 - Jacob Gonzalez
 	- Added PyQt5/PyQt6 compatibility through QtPy
 	- Replaced the Qt5-specific Matplotlib backend with the generic Qt backend
@@ -514,11 +518,14 @@ class SimulatorWidget(QWidget):
 		dx = L / (pix - 1)
 		dy = L / (pix - 1)
 
-		# define pixel (0, 0) to be bottom left
-		rows, cols = np.indices((pix, pix))
+		# use the same spatial grid as the normal pyatoms lattice generation
+		# (so zero drift reproduces the undrifted image xactly)
+		x = np.arange(-(pix//2), (pix-1)//2 + 1) * dx
+		y = np.arange(-(pix//2), (pix-1)//2 + 1) * dy
+		X_scan, Y_scan = np.meshgrid(x, y)
 
-		X_scan = -L/2 + cols * dx
-		Y_scan = -L/2 + rows * dy
+		# pixel indices are needed to determine acquisition time
+		rows, cols = np.indices((pix, pix))
 
 		if self.fast_scan_direction == "Horizontal":
 			t_acq = rows * (2 * L / vs) + cols * (dx / vs)
@@ -3659,7 +3666,7 @@ class SimulatorWidget(QWidget):
 
 		groupbox.setLayout(vlayout)
 
-		plt.tight_layout()
+		# plt.tight_layout()
 
 		self.plotAtoms()
 
@@ -3881,7 +3888,7 @@ class SimulatorWidget(QWidget):
 			self.ax_fft.xaxis.set_tick_params(width=0.5)
 			self.ax_fft.yaxis.set_tick_params(width=0.5)
 
-			plt.tight_layout(pad=0.5,w_pad = 1,h_pad=1) # nothing workd :( 
+			# plt.tight_layout(pad=0.5,w_pad = 1,h_pad=1) # nothing workd :( 
 
 			for axis in ['top','bottom','left','right']:
 				self.ax_real.spines[axis].set_linewidth(0.5)
@@ -3907,7 +3914,7 @@ class SimulatorWidget(QWidget):
 			Zhist,bins = np.histogram(self.Z[:],self.pix//2,density=True)
 			self.c_min = bins[Zhist.searchsorted(0.2)]
 			self.real_space_plot.set_clim(self.c_min,1.0)
-		plt.tight_layout()
+		# plt.tight_layout()
 
 		# Plot a circular with the radius of the half-width at half-max of a 2D gaussian of width w, HWHM = sqrt(2*log(2))*w
 		if self.filter_bool == True and self.sigma != 0:
@@ -3951,7 +3958,7 @@ class SimulatorWidget(QWidget):
 
 		cb_k = plt.colorbar(fig2, ax=self.ax_fft, fraction=0.046, pad=0.04)
 		cb_k.ax.tick_params(width=0.5)
-		plt.tight_layout()
+		# plt.tight_layout()
 
 		if self.filter_bool == True and self.sigma != 0:
 			sigma_k = 1/self.sigma_real # The width of gaussian in k-space
@@ -3987,7 +3994,7 @@ class SimulatorWidget(QWidget):
 			self.ax_fft.yaxis.set_tick_params(width=0.5)
 			cb_r.ax.tick_params(width=0.5)
 			cb_k.ax.tick_params(width=0.5)
-			plt.tight_layout(pad=0.5,w_pad = 1,h_pad=1) # nothing workd :( 
+			# plt.tight_layout(pad=0.5,w_pad = 1,h_pad=1) # nothing workd :( 
 
 			for axis in ['top','bottom','left','right']:
 				self.ax_real.spines[axis].set_linewidth(0.5)
