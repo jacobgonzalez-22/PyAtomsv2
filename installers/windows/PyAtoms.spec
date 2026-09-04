@@ -36,7 +36,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['pyatoms.ico'],
+    icon=['M:/MemberFiles/Jacob/PyAtoms-main/installers/windows/pyatoms.ico'],
 )
 coll = COLLECT(
     exe,
