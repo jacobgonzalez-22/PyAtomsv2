@@ -204,7 +204,6 @@ class Window(QMainWindow):
 
         column4Layout.addWidget(moireCalculatorWidget)
 
-
         topLayout.addWidget(column1Widget)
         topLayout.addWidget(column2Widget)
         topLayout.addWidget(column3Widget)

@@ -1213,29 +1213,27 @@ class SimulatorWidget(QWidget):
 		main_layout = QVBoxLayout()
 		self.moire_calc_tabs = QTabWidget()
 
-		# -------------------------
-		# Forward calculation tab
-		# -------------------------
+		# forward calculation tab
 		forward_widget = QWidget()
 		forward_layout = QGridLayout()
 
-		# Create labels for layers 1 and 2.
+		# create labels for layers 1 and 2
 		lattice1_label = QLabel("Layer 1 lattice constant:")
 		lattice2_label = QLabel("Layer 2 lattice constant:")
 		twist12_label = QLabel("Relative twist angle θ₁₂:")
 
-		# Store the wavelength label and unit so mixed pairs can hide them.
+		# store the wavelength label and unit so mixed pairs can hide them
 		self.moire12_label = QLabel("Moiré wavelength λ₁₂:")
 		self.moire12_unit = QLabel("nm")
 
-		# Create labels used only in trilayer mode.
+		# create labels used only in trilayer mode
 		self.moire_lattice3_label = QLabel("Layer 3 lattice constant:")
 		self.moire_twist23_label = QLabel("Relative twist angle θ₂₃:")
 		self.moire23_label = QLabel("Moiré wavelength λ₂₃:")
 		self.moire_twist13_label = QLabel("Relative twist angle θ₁₃:")
 		self.moire13_label = QLabel("Moiré wavelength λ₁₃:")
 
-		# Create the forward-calculator display boxes.
+		# create the forward-calculator display boxes
 		self.moire_lattice1_display = QLineEdit()
 		self.moire_lattice2_display = QLineEdit()
 		self.moire_twist12_display = QLineEdit()
@@ -1247,7 +1245,7 @@ class SimulatorWidget(QWidget):
 		self.moire_twist13_display = QLineEdit()
 		self.moire_wavelength13_display = QLineEdit()
 
-		# Display the current layer values.
+		# display the current layer values
 		self.moire_lattice1_display.setText(str(self.a))
 		self.moire_lattice2_display.setText(str(self.b))
 		self.moire_twist12_display.setText(str(self.theta_tw))
@@ -1255,7 +1253,7 @@ class SimulatorWidget(QWidget):
 		self.moire_lattice3_display.setText(str(self.c))
 		self.moire_twist23_display.setText(str(self.theta_tw2))
 
-		# Calculate the initial layer 1-2 wavelength.
+		# calculate the initial layer 1-2 wavelength
 		wavelength12 = calculateMoireWavelength(self.a, self.b, self.theta_tw)
 
 		if np.isinf(wavelength12):
@@ -1263,7 +1261,7 @@ class SimulatorWidget(QWidget):
 		else:
 			self.moire_wavelength12_display.setText(f"{wavelength12:.3f}")
 
-		# Calculate the initial layer 2-3 wavelength.
+		# calculate the initial layer 2-3 wavelength
 		wavelength23 = calculateMoireWavelength(self.b, self.c, self.theta_tw2)
 
 		if np.isinf(wavelength23):
@@ -1271,7 +1269,7 @@ class SimulatorWidget(QWidget):
 		else:
 			self.moire_wavelength23_display.setText(f"{wavelength23:.3f}")
 
-		# Calculate the initial layer 1-3 angle and wavelength.
+		# calculate the initial layer 1-3 angle and wavelength
 		theta13 = self.theta_tw + self.theta_tw2
 		self.moire_twist13_display.setText(f"{theta13:.3f}")
 
@@ -1282,7 +1280,7 @@ class SimulatorWidget(QWidget):
 		else:
 			self.moire_wavelength13_display.setText(f"{wavelength13:.3f}")
 
-		# Make all forward-calculator boxes read-only.
+		# make all forward-calculator boxes read-only
 		self.moire_lattice1_display.setReadOnly(True)
 		self.moire_lattice2_display.setReadOnly(True)
 		self.moire_twist12_display.setReadOnly(True)
@@ -1334,7 +1332,7 @@ class SimulatorWidget(QWidget):
 		forward_layout.addWidget(self.moire_wavelength12_display, 3, 1)
 		forward_layout.addWidget(self.moire12_unit, 3, 2)
 
-		# Add the trilayer rows.
+		# add the trilayer rows
 		forward_layout.addWidget(self.moire_lattice3_label, 4, 0)
 		forward_layout.addWidget(self.moire_lattice3_display, 4, 1)
 		forward_layout.addWidget(self.moire_lattice3_unit, 4, 2)
@@ -1365,60 +1363,58 @@ class SimulatorWidget(QWidget):
 
 		forward_widget.setLayout(forward_layout)
 
-		# -------------------------
-		# Inverse calculation tab
-		# -------------------------
+		# inverse calculation tab
 		inverse_widget = QWidget()
 		inverse_layout = QGridLayout()
 
-		# Choose which layer pair the calculation uses.
+		# choose which layer pair the calculation uses
 		inverse_pair_label = QLabel("Layer pair:")
 
 		self.inverse_pair_selector = QComboBox()
 		self.inverse_pair_selector.addItems(["Layers 1–2", "Layers 2–3", "Layers 1–3"])
 		self.inverse_pair_selector.currentIndexChanged.connect(self.updateInverseMoirePair)
 
-		# Create labels.
+		# create labels
 		self.inverse_lattice1_label = QLabel("Layer 1 lattice constant:")
 		self.inverse_lattice2_label = QLabel("Layer 2 lattice constant:")
 		self.inverse_twist12_label = QLabel("Relative twist angle θ₁₂:")
 		self.inverse_moire12_label = QLabel("Moiré wavelength λ₁₂:")
 
-		# Create editable input boxes.
+		# create editable input boxes
 		self.inverse_lattice1_input = QLineEdit()
 		self.inverse_lattice2_input = QLineEdit()
 		self.inverse_twist12_input = QLineEdit()
 		self.inverse_moire12_input = QLineEdit()
 
-		# Pressing Enter in any input runs the calculation.
+		# pressing enter in any input runs the calculation
 		self.inverse_lattice1_input.returnPressed.connect(self.findMissingMoireValue)
 		self.inverse_lattice2_input.returnPressed.connect(self.findMissingMoireValue)
 		self.inverse_twist12_input.returnPressed.connect(self.findMissingMoireValue)
 		self.inverse_moire12_input.returnPressed.connect(self.findMissingMoireValue)
 
-		# Keep the boxes compact.
+		# keep the boxes compact
 		self.inverse_lattice1_input.setFixedWidth(70)
 		self.inverse_lattice2_input.setFixedWidth(70)
 		self.inverse_twist12_input.setFixedWidth(70)
 		self.inverse_moire12_input.setFixedWidth(70)
 
-		# Show that one field should be left empty.
+		# show that one field should be left empty
 		self.inverse_lattice1_input.setPlaceholderText("blank")
 		self.inverse_lattice2_input.setPlaceholderText("blank")
 		self.inverse_twist12_input.setPlaceholderText("blank")
 		self.inverse_moire12_input.setPlaceholderText("blank")
 
-		# Create unit labels.
+		# create unit labels
 		inverse_lattice1_unit = QLabel("nm")
 		inverse_lattice2_unit = QLabel("nm")
 		inverse_twist12_unit = QLabel("°")
 		inverse_moire12_unit = QLabel("nm")
 
-		# Store the last unambiguous result.
+		# store the last unambiguous result
 		self.moire_result_name = None
 		self.moire_result_value = None
 
-		# Create the calculation buttons.
+		# create the calculation buttons
 		self.inverse_calculate_button = QPushButton("Calculate missing value")
 		self.inverse_calculate_button.clicked.connect(self.findMissingMoireValue)
 
@@ -1426,18 +1422,18 @@ class SimulatorWidget(QWidget):
 		self.inverse_apply_button.setEnabled(False)
 		self.inverse_apply_button.clicked.connect(self.applyMoireResult)
 
-		# Create the status and explanation labels.
+		# create the status and explanation labels
 		self.inverse_status_label = QLabel("Enter three values and leave one blank.")
 		self.inverse_status_label.setWordWrap(True)
 
 		inverse_note = QLabel("Apply result to copy completed values to the main lattice settings.")
 		inverse_note.setWordWrap(True)
 
-		# Add the layer-pair selector.
+		# add the layer-pair selector
 		inverse_layout.addWidget(inverse_pair_label, 0, 0)
 		inverse_layout.addWidget(self.inverse_pair_selector, 0, 1, 1, 2)
 
-		# Add the inverse-calculator input rows.
+		# add the inverse-calculator input rows
 		inverse_layout.addWidget(self.inverse_lattice1_label, 1, 0)
 		inverse_layout.addWidget(self.inverse_lattice1_input, 1, 1)
 		inverse_layout.addWidget(inverse_lattice1_unit, 1, 2)
@@ -1454,7 +1450,7 @@ class SimulatorWidget(QWidget):
 		inverse_layout.addWidget(self.inverse_moire12_input, 4, 1)
 		inverse_layout.addWidget(inverse_moire12_unit, 4, 2)
 
-		# Add the buttons and messages.
+		# add the buttons and messages
 		inverse_layout.addWidget(self.inverse_calculate_button, 5, 0, 1, 3)
 		inverse_layout.addWidget(self.inverse_apply_button, 6, 0, 1, 3)
 		inverse_layout.addWidget(self.inverse_status_label, 7, 0, 1, 3)
@@ -1462,21 +1458,45 @@ class SimulatorWidget(QWidget):
 
 		inverse_widget.setLayout(inverse_layout)
 
-		# Add both pages to the tab widget.
+		# add both pages to the tab widget
 		self.moire_calc_tabs.addTab(forward_widget, "Calculate wavelength")
 		self.moire_calc_tabs.addTab(inverse_widget, "Solve missing value")
+
+		self.moire_calc_tabs.currentChanged.connect(
+			lambda index: QTimer.singleShot(0, self.updateMoireCalcTabHeight)
+		)
 
 		main_layout.addWidget(self.moire_calc_tabs)
 		groupBox.setLayout(main_layout)
 
-		# Load the initial inverse-calculator pair.
+		# load the initial inverse-calculator pair
 		self.updateInverseMoirePair()
 
-		# Set the initial row visibility and forward results.
+		# set the initial row visibility and forward results
 		self.updateMoireCalcLayerVisibility()
 		self.updateMoireCalcDisplays()
 
+		QTimer.singleShot(0, self.updateMoireCalcTabHeight)
+
 		return groupBox
+
+	def updateMoireCalcTabHeight(self):
+		current_page = self.moire_calc_tabs.currentWidget()
+
+		if current_page is None:
+			return
+
+		current_page.adjustSize()
+
+		page_height = current_page.sizeHint().height()
+		tab_height = self.moire_calc_tabs.tabBar().sizeHint().height()
+
+		new_height = tab_height + page_height + 12
+
+		self.moire_calc_tabs.setMinimumHeight(new_height)
+		self.moire_calc_tabs.setMaximumHeight(new_height)
+
+		self.moire_calc_tabs.updateGeometry()
 
 	def updateInverseMoirePair(self):
 		"""
@@ -1736,6 +1756,8 @@ class SimulatorWidget(QWidget):
 
 		# Refresh the results after changing modes.
 		self.updateMoireCalcDisplays()
+		
+		QTimer.singleShot(0, self.updateMoireCalcTabHeight)
 
 	def findMissingMoireValue(self):
 		"""
@@ -4744,6 +4766,8 @@ class SimulatorWidget(QWidget):
 
 		groupBox.setLayout(vlayout)
 
+		QTimer.singleShot(0, self.updateFilteringTabHeight)
+
 		return groupBox
 
 	def hideFFTSelections(self):
@@ -4752,6 +4776,25 @@ class SimulatorWidget(QWidget):
 
 		self.fft_selection_patches = []
 		self.canvas.draw_idle()
+
+
+	def updateFilteringTabHeight(self):
+		current_page = self.filter_tabs.currentWidget()
+
+		if current_page is None:
+			return
+
+		current_page.adjustSize()
+
+		page_height = current_page.sizeHint().height()
+		tab_height = self.filter_tabs.tabBar().sizeHint().height()
+
+		new_height = tab_height + page_height + 12
+
+		self.filter_tabs.setMinimumHeight(new_height)
+		self.filter_tabs.setMaximumHeight(new_height)
+
+		self.filter_tabs.updateGeometry()
 
 	def updateActiveFilterTab(self, index):
 		"""
@@ -4779,6 +4822,8 @@ class SimulatorWidget(QWidget):
 			# redraw any saved fft selections
 			self.drawFFTSelections()
 
+		QTimer.singleShot(0, self.updateFilteringTabHeight)
+
 	def toggleFFTPreciseDimensions(self, checked):
 		# self.fft_width_label.setVisible(checked)
 		self.fft_width_input.setVisible(checked)
@@ -4799,6 +4844,8 @@ class SimulatorWidget(QWidget):
 				self.fft_angle_input.setText(f"{selection['angle']:.2f}")
 
 		self.drawFFTSelections()
+
+		QTimer.singleShot(0, self.updateFilteringTabHeight)
 
 	def applyFFTPreciseDimensions(self):
 		"""
