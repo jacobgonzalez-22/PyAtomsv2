@@ -105,7 +105,6 @@ class Window(QMainWindow):
         filteringWidget = self.SimWidget.initFiltering()
         timeEstimatorWidget = self.SimWidget.initTimeEstimatorTabs()
         moireCalculatorWidget = self.SimWidget.initMoireCalcWidget()
-        moireCalculatorWidget.setMinimumWidth(350)
 
         # build the three lattice panels before creating the plot
         lattice1Widget = self.SimWidget.initLattice1Parameters()
@@ -149,69 +148,134 @@ class Window(QMainWindow):
         # when the window is too small
         self.topControlsContainer = QWidget()
 
-        topLayout = QHBoxLayout(self.topControlsContainer)
-        topLayout.setContentsMargins(4, 4, 4, 4)
-        topLayout.setSpacing(11)
+        topContainerLayout = QVBoxLayout(self.topControlsContainer)
+        topContainerLayout.setContentsMargins(4, 4, 4, 4)
+        topContainerLayout.setSpacing(4)
+        topContainerLayout.setAlignment(Qt.AlignTop)
 
-        # Column 1: multilayer controls + misc.
+        self.topControlsTabs = QTabWidget()
+
+
+        # page 1: main controls
+
+        mainControlsPage = QWidget()
+
+        mainControlsLayout = QHBoxLayout(mainControlsPage)
+        mainControlsLayout.setContentsMargins(4, 4, 4, 4)
+        mainControlsLayout.setSpacing(6)
+        mainControlsLayout.setAlignment(Qt.AlignTop)
+
+
+        # column 1: multilayer controls + misc.
         column1Widget = QWidget()
+        column1Widget.setMaximumWidth(350)
+
         column1Layout = QVBoxLayout(column1Widget)
         column1Layout.setContentsMargins(0, 0, 0, 0)
         column1Layout.setSpacing(4)
         column1Layout.setAlignment(Qt.AlignTop)
 
-        moireModelWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        outputWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        moireModelWidget.setSizePolicy(
+            QSizePolicy.Preferred,
+            QSizePolicy.Maximum
+        )
+
+        outputWidget.setSizePolicy(
+            QSizePolicy.Preferred,
+            QSizePolicy.Maximum
+        )
 
         column1Layout.addWidget(moireModelWidget)
         column1Layout.addWidget(outputWidget)
 
 
-        # Column 2: image parameters
+        # column 2: image parameters
         column2Widget = QWidget()
+
         column2Layout = QVBoxLayout(column2Widget)
         column2Layout.setContentsMargins(0, 0, 0, 0)
         column2Layout.setSpacing(4)
         column2Layout.setAlignment(Qt.AlignTop)
 
-        imageParametersWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        imageParametersWidget.setSizePolicy(
+            QSizePolicy.Preferred,
+            QSizePolicy.Maximum
+        )
 
         column2Layout.addWidget(imageParametersWidget)
 
 
-        # Column 3: filtering + time estimator
+        # column 3: filtering + time estimator
         column3Widget = QWidget()
+
         column3Layout = QVBoxLayout(column3Widget)
         column3Layout.setContentsMargins(0, 0, 0, 0)
         column3Layout.setSpacing(4)
         column3Layout.setAlignment(Qt.AlignTop)
 
-        filteringWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        timeEstimatorWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        filteringWidget.setSizePolicy(
+            QSizePolicy.Preferred,
+            QSizePolicy.Maximum
+        )
+
+        timeEstimatorWidget.setSizePolicy(
+            QSizePolicy.Preferred,
+            QSizePolicy.Maximum
+        )
 
         column3Layout.addWidget(filteringWidget)
         column3Layout.addWidget(timeEstimatorWidget)
 
 
-        # Column 4: moire calculator
-        column4Widget = QWidget()
-        column4Layout = QVBoxLayout(column4Widget)
-        column4Layout.setContentsMargins(0, 0, 0, 0)
-        column4Layout.setSpacing(4)
-        column4Layout.setAlignment(Qt.AlignTop)
+        mainControlsLayout.addWidget(column1Widget)
+        mainControlsLayout.addWidget(column2Widget)
+        mainControlsLayout.addWidget(column3Widget)
+        mainControlsLayout.addStretch(1)
 
-        moireCalculatorWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
 
-        column4Layout.addWidget(moireCalculatorWidget)
+        # page 2: moire calculator
 
-        topLayout.addWidget(column1Widget)
-        topLayout.addWidget(column2Widget)
-        topLayout.addWidget(column3Widget)
-        topLayout.addWidget(column4Widget)
-        topLayout.addStretch(1)
+        moireCalculatorPage = QWidget()
+
+        moireCalculatorLayout = QVBoxLayout(moireCalculatorPage)
+        moireCalculatorLayout.setContentsMargins(4, 4, 4, 4)
+        moireCalculatorLayout.setSpacing(4)
+        moireCalculatorLayout.setAlignment(Qt.AlignTop)
+
+        moireCalculatorWidget.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Maximum
+        )
+
+        moireCalculatorLayout.addWidget(moireCalculatorWidget)
+
+
+        # add both pages
+
+        self.topControlsTabs.addTab(
+            mainControlsPage,
+            "Main controls"
+        )
+
+        self.topControlsTabs.addTab(
+            moireCalculatorPage,
+            "Moiré calculator"
+        )
+
+        self.topControlsTabs.currentChanged.connect(
+            lambda index: QTimer.singleShot(
+                0,
+                self.updateTopControlsTabHeight
+            )
+        )
+
+        topContainerLayout.addWidget(self.topControlsTabs)
 
         self.topControlsContainer.adjustSize()
         self.topControlsContainer.setMinimumSize(self.topControlsContainer.sizeHint())
+
+        # allow the top controls to compress horizontally to the viewport
+        self.topControlsContainer.setMinimumWidth(0)
 
         self.topControlsScrollArea = QScrollArea()
         self.topControlsScrollArea.setWidgetResizable(True)
@@ -262,6 +326,58 @@ class Window(QMainWindow):
 
         # wait until Qt knows the windows real on-screen dimensions before choosing the starting splitter positions
         QTimer.singleShot(0, self.setInitialSplitterSizes)
+        QTimer.singleShot(0, self.updateTopControlsTabHeight)
+
+    def updateTopControlsTabHeight(self):
+        currentPage = self.topControlsTabs.currentWidget()
+
+        if currentPage is None:
+            return
+
+        currentPage.adjustSize()
+
+        pageHeight = currentPage.sizeHint().height()
+        tabHeight = self.topControlsTabs.tabBar().sizeHint().height()
+
+        newHeight = tabHeight + pageHeight + 12
+
+        self.topControlsTabs.setMinimumHeight(newHeight)
+        self.topControlsTabs.setMaximumHeight(newHeight)
+
+        self.topControlsContainer.adjustSize()
+
+        if hasattr(self, "topControlsScrollArea"):
+            horizontalBarHeight = (
+                self.topControlsScrollArea
+                .horizontalScrollBar()
+                .sizeHint()
+                .height()
+            )
+
+            self.topControlsPreferredHeight = (
+                self.topControlsContainer.sizeHint().height()
+                + horizontalBarHeight
+                + 16
+            )
+
+            self.topControlsScrollArea.setMaximumHeight(
+                self.topControlsPreferredHeight
+            )
+
+            if hasattr(self, "rightSplitter"):
+                totalHeight = max(self.rightSplitter.height(), 1)
+
+                controlsHeight = min(
+                    self.topControlsPreferredHeight,
+                    int(totalHeight * 0.39)
+                )
+
+                controlsHeight = max(180, controlsHeight)
+
+                self.rightSplitter.setSizes([
+                    controlsHeight,
+                    max(totalHeight - controlsHeight, 1)
+                ])
 
     def setInitialSplitterSizes(self):
         # give the lattice column enough width for its natural layout BUT dont let it
