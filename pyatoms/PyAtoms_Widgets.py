@@ -559,6 +559,7 @@ class SimulatorWidget(QWidget):
 		self.image_tabs.addTab(self.drift_tab, "Drift")
 
 		vlayout = QVBoxLayout(self)
+		vlayout.setAlignment(Qt.AlignTop)
 
 		# Pixels
 		self.pix_res_label = QLabel("Real resolution: " + "       %.3f nm/pix"  % (self.realResolution) +
@@ -691,6 +692,7 @@ class SimulatorWidget(QWidget):
 		self.image_tab.setLayout(vlayout)
 
 		drift_layout = QVBoxLayout(self)
+		drift_layout.setAlignment(Qt.AlignTop)
 		drift_layout.addWidget(self.initDriftParameters())
 		self.drift_tab.setLayout(drift_layout)
 
@@ -907,6 +909,7 @@ class SimulatorWidget(QWidget):
 		hbox.addWidget(self.trilayer)
 
 		vlayout = QVBoxLayout(self)
+		vlayout.setAlignment(Qt.AlignTop)
 
 		vlayout.addLayout(hbox)
 
@@ -1054,6 +1057,7 @@ class SimulatorWidget(QWidget):
 		hbox.addWidget(self.calc_topo_btn)
 
 		vlayout = QVBoxLayout(self)
+		vlayout.setAlignment(Qt.AlignTop)
 		# vlayout.addLayout(hbox)
 
 		# Create vt input text box
@@ -1155,6 +1159,7 @@ class SimulatorWidget(QWidget):
 		hbox.addWidget(self.calc_map_btn)
 
 		vlayout = QVBoxLayout(self)
+		vlayout.setAlignment(Qt.AlignTop)
 		# vlayout.addLayout(hbox)
 
 		# Create tps (time per spectra) input text box
@@ -4040,6 +4045,8 @@ class SimulatorWidget(QWidget):
 
 
 		vlayout = QVBoxLayout()
+		vlayout.setAlignment(Qt.AlignTop)
+
 		vlayout.addWidget(self.saveLabel)
 
 		vlayout.addWidget(self.save_btn)
@@ -4595,6 +4602,7 @@ class SimulatorWidget(QWidget):
 
 		# layout for the existing low pass filter tab
 		lowpass_layout = QVBoxLayout(self.lowpass_tab)
+		lowpass_layout.setAlignment(Qt.AlignTop)
 
 		hbox2 = QHBoxLayout()
 		hbox2.addWidget(self.sigma_label)
@@ -4616,6 +4624,7 @@ class SimulatorWidget(QWidget):
 
 		# layout for the 2D FFT filter tab
 		fft_filter_layout = QVBoxLayout(self.fft_filter_tab)
+		fft_filter_layout.setAlignment(Qt.AlignTop)
 
 		# button to turn FFT region selection on and off
 		self.fft_select_btn = QPushButton("Select regions", self)

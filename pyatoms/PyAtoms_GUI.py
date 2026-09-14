@@ -148,21 +148,68 @@ class Window(QMainWindow):
         # top right section -> all global controls in one area that can scroll in both directions
         # when the window is too small
         self.topControlsContainer = QWidget()
-        topGrid = QGridLayout(self.topControlsContainer)
-        topGrid.setContentsMargins(4, 4, 4, 4)
-        topGrid.setHorizontalSpacing(11)
-        topGrid.setVerticalSpacing(11)
 
-        topGrid.addWidget(moireModelWidget, 0, 0)
-        topGrid.addWidget(outputWidget, 1, 0)
-        topGrid.addWidget(imageParametersWidget, 0, 1, 2, 1)
-        topGrid.addWidget(filteringWidget, 0, 2)
-        topGrid.addWidget(timeEstimatorWidget, 1, 2)
-        topGrid.addWidget(moireCalculatorWidget, 0, 3, 2, 1)
+        topLayout = QHBoxLayout(self.topControlsContainer)
+        topLayout.setContentsMargins(4, 4, 4, 4)
+        topLayout.setSpacing(11)
 
-        # any extra room goes to blank space instead of stretching the control boxes
-        topGrid.setColumnStretch(4, 1)
-        topGrid.setRowStretch(2, 1)
+        # Column 1: multilayer controls + misc.
+        column1Widget = QWidget()
+        column1Layout = QVBoxLayout(column1Widget)
+        column1Layout.setContentsMargins(0, 0, 0, 0)
+        column1Layout.setSpacing(4)
+        column1Layout.setAlignment(Qt.AlignTop)
+
+        moireModelWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        outputWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+
+        column1Layout.addWidget(moireModelWidget)
+        column1Layout.addWidget(outputWidget)
+
+
+        # Column 2: image parameters
+        column2Widget = QWidget()
+        column2Layout = QVBoxLayout(column2Widget)
+        column2Layout.setContentsMargins(0, 0, 0, 0)
+        column2Layout.setSpacing(4)
+        column2Layout.setAlignment(Qt.AlignTop)
+
+        imageParametersWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+
+        column2Layout.addWidget(imageParametersWidget)
+
+
+        # Column 3: filtering + time estimator
+        column3Widget = QWidget()
+        column3Layout = QVBoxLayout(column3Widget)
+        column3Layout.setContentsMargins(0, 0, 0, 0)
+        column3Layout.setSpacing(4)
+        column3Layout.setAlignment(Qt.AlignTop)
+
+        filteringWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        timeEstimatorWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+
+        column3Layout.addWidget(filteringWidget)
+        column3Layout.addWidget(timeEstimatorWidget)
+
+
+        # Column 4: moire calculator
+        column4Widget = QWidget()
+        column4Layout = QVBoxLayout(column4Widget)
+        column4Layout.setContentsMargins(0, 0, 0, 0)
+        column4Layout.setSpacing(4)
+        column4Layout.setAlignment(Qt.AlignTop)
+
+        moireCalculatorWidget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+
+        column4Layout.addWidget(moireCalculatorWidget)
+
+
+        topLayout.addWidget(column1Widget)
+        topLayout.addWidget(column2Widget)
+        topLayout.addWidget(column3Widget)
+        topLayout.addWidget(column4Widget)
+        topLayout.addStretch(1)
 
         self.topControlsContainer.adjustSize()
         self.topControlsContainer.setMinimumSize(self.topControlsContainer.sizeHint())
@@ -224,19 +271,21 @@ class Window(QMainWindow):
         latticeHint = self.latticeControlsContainer.sizeHint().width()
         scrollBarWidth = self.latticeScrollArea.verticalScrollBar().sizeHint().width()
         preferredLatticeWidth = latticeHint + scrollBarWidth + 8
-        maximumLatticeWidth = max(280, int(totalWidth * 0.32))
-        latticeWidth = max(280, min(preferredLatticeWidth, maximumLatticeWidth))
+        minimumLatticeWidth = 365
+        maximumLatticeWidth = max(minimumLatticeWidth, int(totalWidth * 0.28))
+
+        latticeWidth = max(
+            minimumLatticeWidth,
+            min(preferredLatticeWidth, maximumLatticeWidth)
+        )
         self.mainSplitter.setSizes([latticeWidth, max(totalWidth - latticeWidth, 1)])
 
         # show the full top controls when the screen is tall enough. on a shorter display
         # limit them to about 35 % of the right workspace so the most height goes to the plots
         totalHeight = max(self.rightSplitter.height(), 1)
-        maximumControlsHeight = max(200, int(totalHeight * 0.42))
+        maximumControlsHeight = max(200, int(totalHeight * 0.39))
         controlsHeight = max(180, min(self.topControlsPreferredHeight, maximumControlsHeight))
         self.rightSplitter.setSizes([controlsHeight, max(totalHeight - controlsHeight, 1)])
-
-        
-
 
 
     # Overriding keyPressEvent so that if the escape button is pressed, it doesn't automatically close the program
