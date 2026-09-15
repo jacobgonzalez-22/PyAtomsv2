@@ -60,7 +60,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 # NavigationToolbar2QT: It will provide the tool bar for the matplotlib figs (zooming in, panning, saving image, etc)
 # https://www.geeksforgeeks.org/how-to-embed-matplotlib-graph-in-pyqt5/
 
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, map_coordinates
 
 import traceback
 
@@ -158,8 +158,35 @@ class SimulatorWidget(QWidget):
 		self.fft_motion_cid = None
 		self.fft_release_cid = None
 
-		self.saveFileName = ''
+		# line profile tool
+		self.line_profile_selecting = False
 
+		self.line_profile_start = None
+		self.line_profile_end = None
+
+		self.line_profile_preview = None
+		self.line_profile_artist = None
+
+		self.line_profile_press_cid = None
+		self.line_profile_motion_cid = None
+		self.line_profile_release_cid = None
+
+		self.line_profile_distance = None
+		self.line_profile_values = None
+		self.line_profile_source = None
+
+		self.line_profile_dialog = None
+
+		self.line_profile_start_artist = None
+		self.line_profile_end_artist = None
+
+		self.line_profile_dragging_endpoint = None
+
+		self.line_profile_edit_press_cid = None
+		self.line_profile_edit_motion_cid = None
+		self.line_profile_edit_release_cid = None
+
+		self.saveFileName = ''
 
 		self.c_min = 0.0
 		self.vmax_fft = 0.5
@@ -559,7 +586,6 @@ class SimulatorWidget(QWidget):
 		self.image_tabs.addTab(self.drift_tab, "Drift")
 
 		vlayout = QVBoxLayout(self)
-		vlayout.setAlignment(Qt.AlignTop)
 
 		# Pixels
 		self.pix_res_label = QLabel("Real resolution: " + "       %.3f nm/pix"  % (self.realResolution) +
@@ -908,28 +934,36 @@ class SimulatorWidget(QWidget):
 		hbox.addWidget(self.yesMoire)
 		hbox.addWidget(self.trilayer)
 
-		vlayout = QVBoxLayout(self)
-		vlayout.setAlignment(Qt.AlignTop)
+		vlayout = QVBoxLayout()
+		vlayout.setContentsMargins(10, 10, 10, 10)
+		vlayout.setSpacing(4)
 
+		# Single / Bilayer / Trilayer
 		vlayout.addLayout(hbox)
 
-		hlayout1 = QHBoxLayout(self)
+		# use the available vertical space
+		vlayout.addStretch(1)
+
+		# Simple mode
+		hlayout1 = QHBoxLayout()
 		hlayout1.addWidget(self.SimpleMode_btn)
 		hlayout1.addWidget(self.eta_label)
 		hlayout1.addWidget(self.eta_input)
 		hlayout1.addWidget(self.eta_btn)
+
 		vlayout.addLayout(hlayout1)
-		hlayout2 = QHBoxLayout(self)
+
+		# use the available vertical space
+		vlayout.addStretch(1)
+
+		# Log mode
+		hlayout2 = QHBoxLayout()
 		hlayout2.addWidget(self.LogMode_btn)
 		hlayout2.addWidget(self.xi_label)
 		hlayout2.addWidget(self.xi_input)
 		hlayout2.addWidget(self.xi_btn)
+
 		vlayout.addLayout(hlayout2)
-		groupBox.setLayout(vlayout)
-		vlayout.setSpacing(1)
-
-
-
 
 		groupBox.setLayout(vlayout)
 		# groupBox.setLayout(hbox)
@@ -1480,6 +1514,1164 @@ class SimulatorWidget(QWidget):
 
 		return groupBox
 
+	def initLineProfileWidget(self):
+		groupBox = QGroupBox("Line profile")
+
+		mainLayout = QHBoxLayout()
+		mainLayout.setContentsMargins(8, 8, 8, 8)
+		mainLayout.setSpacing(14)
+		mainLayout.setAlignment(Qt.AlignTop)
+
+		# left: selection controls
+		selectionWidget = QWidget()
+		selectionLayout = QVBoxLayout(selectionWidget)
+		selectionLayout.setContentsMargins(0, 0, 0, 0)
+		selectionLayout.setSpacing(6)
+		selectionLayout.setAlignment(Qt.AlignTop)
+
+		description = QLabel(
+			"Draw and edit a line on the real-space image to "
+			"extract the simulated signal along that path."
+		)
+		description.setWordWrap(True)
+		description.setMaximumWidth(420)
+
+
+		self.line_profile_select_btn = QPushButton(
+			"Select line",
+			self
+		)
+		self.line_profile_select_btn.setAutoDefault(False)
+		self.line_profile_select_btn.clicked.connect(
+			self.toggleLineProfileSelection
+		)
+
+		self.line_profile_clear_btn = QPushButton(
+			"Clear line",
+			self
+		)
+		self.line_profile_clear_btn.setAutoDefault(False)
+		self.line_profile_clear_btn.clicked.connect(
+			self.clearLineProfile
+		)
+
+		selectionButtons = QHBoxLayout()
+		selectionButtons.addWidget(
+			self.line_profile_select_btn
+		)
+		selectionButtons.addWidget(
+			self.line_profile_clear_btn
+		)
+
+		hintLabel = QLabel(
+			"Drag either endpoint to edit. "
+			"Hold Shift while drawing or dragging "
+			"to snap horizontally or vertically."
+		)
+		hintLabel.setWordWrap(True)
+		hintLabel.setMaximumWidth(420)
+
+		selectionLayout.addWidget(description)
+		selectionLayout.addLayout(selectionButtons)
+		selectionLayout.addWidget(hintLabel)
+
+		# middle: endpoints
+		endpointsWidget = QWidget()
+		endpointsLayout = QVBoxLayout(endpointsWidget)
+		endpointsLayout.setContentsMargins(0, 0, 0, 0)
+		endpointsLayout.setSpacing(6)
+		endpointsLayout.setAlignment(Qt.AlignTop)
+
+		endpointsLabel = QLabel("Endpoints")
+
+		coordinateGrid = QGridLayout()
+		coordinateGrid.setHorizontalSpacing(6)
+		coordinateGrid.setVerticalSpacing(6)
+
+		self.line_profile_x1_input = QLineEdit(self)
+		self.line_profile_y1_input = QLineEdit(self)
+		self.line_profile_x2_input = QLineEdit(self)
+		self.line_profile_y2_input = QLineEdit(self)
+
+		for widget in (
+			self.line_profile_x1_input,
+			self.line_profile_y1_input,
+			self.line_profile_x2_input,
+			self.line_profile_y2_input
+		):
+			widget.setFixedWidth(70)
+
+		coordinateGrid.addWidget(
+			QLabel("x (nm)"),
+			0,
+			1
+		)
+
+		coordinateGrid.addWidget(
+			QLabel("y (nm)"),
+			0,
+			2
+		)
+
+		coordinateGrid.addWidget(
+			QLabel("Start:"),
+			1,
+			0
+		)
+
+		coordinateGrid.addWidget(
+			self.line_profile_x1_input,
+			1,
+			1
+		)
+
+		coordinateGrid.addWidget(
+			self.line_profile_y1_input,
+			1,
+			2
+		)
+
+		coordinateGrid.addWidget(
+			QLabel("End:"),
+			2,
+			0
+		)
+
+		coordinateGrid.addWidget(
+			self.line_profile_x2_input,
+			2,
+			1
+		)
+
+		coordinateGrid.addWidget(
+			self.line_profile_y2_input,
+			2,
+			2
+		)
+
+		self.line_profile_apply_endpoints_btn = QPushButton(
+			"Apply endpoints",
+			self
+		)
+		self.line_profile_apply_endpoints_btn.setAutoDefault(False)
+		self.line_profile_apply_endpoints_btn.clicked.connect(
+			self.applyLineProfileEndpoints
+		)
+
+		endpointsLayout.addWidget(endpointsLabel)
+		endpointsLayout.addLayout(coordinateGrid)
+		endpointsLayout.addWidget(
+			self.line_profile_apply_endpoints_btn
+		)
+
+		# right: geometry / output
+		geometryWidget = QWidget()
+		geometryLayout = QVBoxLayout(geometryWidget)
+		geometryLayout.setContentsMargins(0, 0, 0, 0)
+		geometryLayout.setSpacing(6)
+		geometryLayout.setAlignment(Qt.AlignTop)
+
+		geometryLabel = QLabel("Geometry")
+
+		geometryGrid = QGridLayout()
+		geometryGrid.setHorizontalSpacing(6)
+		geometryGrid.setVerticalSpacing(6)
+
+		self.line_profile_length_input = QLineEdit(self)
+		self.line_profile_angle_input = QLineEdit(self)
+
+		self.line_profile_length_input.setFixedWidth(70)
+		self.line_profile_angle_input.setFixedWidth(70)
+
+		geometryGrid.addWidget(
+			QLabel("Length:"),
+			0,
+			0
+		)
+
+		geometryGrid.addWidget(
+			self.line_profile_length_input,
+			0,
+			1
+		)
+
+		geometryGrid.addWidget(
+			QLabel("nm"),
+			0,
+			2
+		)
+
+		geometryGrid.addWidget(
+			QLabel("Angle:"),
+			1,
+			0
+		)
+
+		geometryGrid.addWidget(
+			self.line_profile_angle_input,
+			1,
+			1
+		)
+
+		geometryGrid.addWidget(
+			QLabel("deg"),
+			1,
+			2
+		)
+
+		self.line_profile_apply_geometry_btn = QPushButton(
+			"Apply length / angle",
+			self
+		)
+		self.line_profile_apply_geometry_btn.setAutoDefault(False)
+		self.line_profile_apply_geometry_btn.clicked.connect(
+			self.applyLineProfileLengthAngle
+		)
+
+		self.line_profile_show_btn = QPushButton(
+			"Show profile",
+			self
+		)
+		self.line_profile_show_btn.setAutoDefault(False)
+		self.line_profile_show_btn.setEnabled(False)
+		self.line_profile_show_btn.clicked.connect(
+			self.showLineProfile
+		)
+
+		self.line_profile_status_label = QLabel(
+			"No line selected."
+		)
+		self.line_profile_status_label.setWordWrap(True)
+
+		geometryLayout.addWidget(geometryLabel)
+		geometryLayout.addLayout(geometryGrid)
+		geometryLayout.addWidget(
+			self.line_profile_apply_geometry_btn
+		)
+		geometryLayout.addWidget(
+			self.line_profile_show_btn
+		)
+		geometryLayout.addWidget(
+			self.line_profile_status_label
+		)
+
+
+		# assemble!
+		mainLayout.addWidget(selectionWidget, 3)
+		mainLayout.addWidget(endpointsWidget, 2)
+		mainLayout.addWidget(geometryWidget, 2)
+
+		groupBox.setLayout(mainLayout)
+
+		return groupBox
+
+	def constrainLineProfilePoint(self, fixedPoint, x, y, event):
+		modifiers = QApplication.keyboardModifiers()
+
+		try:
+			shiftPressed = bool(
+				modifiers & Qt.ShiftModifier
+			)
+		except AttributeError:
+			shiftPressed = bool(
+				modifiers & Qt.KeyboardModifier.ShiftModifier
+			)
+
+		if not shiftPressed:
+			return x, y
+
+		fixedX, fixedY = fixedPoint
+
+		dx = x - fixedX
+		dy = y - fixedY
+
+		if abs(dx) >= abs(dy):
+			# snap horizontal
+			y = fixedY
+		else:
+			# snap vertical
+			x = fixedX
+
+		return x, y
+
+	def toggleLineProfileSelection(self):
+		if self.line_profile_selecting:
+			self.stopLineProfileSelection()
+
+			self.line_profile_status_label.setText(
+				"Selection cancelled."
+			)
+
+			return
+
+		if not hasattr(self, "ax_real"):
+			return
+
+		# Avoid fighting with Matplotlib's pan/zoom tools.
+		if hasattr(self, "toolbar") and self.toolbar.mode:
+			self.line_profile_status_label.setText(
+				"Turn off pan/zoom in the plot toolbar first."
+			)
+
+			return
+
+		self.line_profile_selecting = True
+		self.line_profile_select_btn.setText("Cancel selection")
+
+		self.line_profile_status_label.setText(
+			"Click and drag across the real-space image."
+		)
+
+		self.line_profile_press_cid = self.canvas.mpl_connect(
+			"button_press_event",
+			self.onLineProfilePress
+		)
+
+		self.line_profile_motion_cid = self.canvas.mpl_connect(
+			"motion_notify_event",
+			self.onLineProfileMotion
+		)
+
+		self.line_profile_release_cid = self.canvas.mpl_connect(
+			"button_release_event",
+			self.onLineProfileRelease
+		)
+
+	def stopLineProfileSelection(self):
+		self.line_profile_selecting = False
+		self.line_profile_select_btn.setText("Select line")
+
+		if self.line_profile_press_cid is not None:
+			self.canvas.mpl_disconnect(
+				self.line_profile_press_cid
+			)
+
+			self.line_profile_press_cid = None
+
+		if self.line_profile_motion_cid is not None:
+			self.canvas.mpl_disconnect(
+				self.line_profile_motion_cid
+			)
+
+			self.line_profile_motion_cid = None
+
+		if self.line_profile_release_cid is not None:
+			self.canvas.mpl_disconnect(
+				self.line_profile_release_cid
+			)
+
+			self.line_profile_release_cid = None
+
+		if self.line_profile_preview is not None:
+			try:
+				self.line_profile_preview.remove()
+			except Exception:
+				pass
+
+			self.line_profile_preview = None
+
+		self.canvas.draw_idle()
+
+	def onLineProfilePress(self, event):
+		if not self.line_profile_selecting:
+			return
+
+		if event.inaxes != self.ax_real:
+			return
+
+		if event.button != 1:
+			return
+
+		if event.xdata is None or event.ydata is None:
+			return
+
+		self.line_profile_start = (
+			float(event.xdata),
+			float(event.ydata)
+		)
+
+		if self.line_profile_preview is not None:
+			try:
+				self.line_profile_preview.remove()
+			except Exception:
+				pass
+
+		x, y = self.line_profile_start
+
+		self.line_profile_preview, = self.ax_real.plot(
+			[x, x],
+			[y, y],
+			color="cyan",
+			linewidth=2
+		)
+
+		self.canvas.draw_idle()
+
+	def onLineProfileMotion(self, event):
+		if not self.line_profile_selecting:
+			return
+
+		if self.line_profile_start is None:
+			return
+
+		if event.inaxes != self.ax_real:
+			return
+
+		if event.xdata is None or event.ydata is None:
+			return
+
+		if self.line_profile_preview is None:
+			return
+
+		x1, y1 = self.line_profile_start
+		x2 = float(event.xdata)
+		y2 = float(event.ydata)
+
+		x2, y2 = self.constrainLineProfilePoint(
+			self.line_profile_start,
+			x2,
+			y2,
+			event
+		)
+
+		self.line_profile_preview.set_data(
+			[x1, x2],
+			[y1, y2]
+		)
+
+		self.canvas.draw_idle()
+
+	def onLineProfileRelease(self, event):
+		if not self.line_profile_selecting:
+			return
+
+		if self.line_profile_start is None:
+			return
+
+		if event.inaxes != self.ax_real:
+			return
+
+		if event.xdata is None or event.ydata is None:
+			return
+
+		x1, y1 = self.line_profile_start
+		x2 = float(event.xdata)
+		y2 = float(event.ydata)
+
+		x2, y2 = self.constrainLineProfilePoint(
+			self.line_profile_start,
+			x2,
+			y2,
+			event
+		)
+
+		length = np.hypot(
+			x2 - x1,
+			y2 - y1
+		)
+
+		if length == 0:
+			return
+
+		self.line_profile_end = (
+			x2,
+			y2
+		)
+
+		if self.line_profile_preview is not None:
+			try:
+				self.line_profile_preview.remove()
+			except Exception:
+				pass
+
+			self.line_profile_preview = None
+
+		if self.line_profile_artist is not None:
+			try:
+				self.line_profile_artist.remove()
+			except Exception:
+				pass
+
+		self.stopLineProfileSelection()
+
+		self.setLineProfileGeometry(
+			self.line_profile_start,
+			self.line_profile_end
+		)
+
+	def drawStoredLineProfileSelection(self):
+		if self.line_profile_start is None:
+			return
+
+		if self.line_profile_end is None:
+			return
+
+		self.removeLineProfileArtists()
+
+		x1, y1 = self.line_profile_start
+		x2, y2 = self.line_profile_end
+
+		self.line_profile_artist, = self.ax_real.plot(
+			[x1, x2],
+			[y1, y2],
+			color="cyan",
+			linewidth=2
+		)
+
+		self.line_profile_start_artist, = self.ax_real.plot(
+			[x1],
+			[y1],
+			marker="o",
+			markersize=8,
+			color="cyan",
+			markeredgecolor="black",
+			picker=8
+		)
+
+		self.line_profile_end_artist, = self.ax_real.plot(
+			[x2],
+			[y2],
+			marker="o",
+			markersize=8,
+			color="cyan",
+			markeredgecolor="black",
+			picker=8
+		)
+
+		self.ensureLineProfileEditConnections()
+
+	def removeLineProfileArtists(self):
+		for artistName in (
+			"line_profile_artist",
+			"line_profile_start_artist",
+			"line_profile_end_artist"
+		):
+			artist = getattr(self, artistName, None)
+
+			if artist is not None:
+				try:
+					artist.remove()
+				except Exception:
+					pass
+
+			setattr(self, artistName, None)
+
+	def ensureLineProfileEditConnections(self):
+		if self.line_profile_edit_press_cid is None:
+			self.line_profile_edit_press_cid = self.canvas.mpl_connect(
+				"button_press_event",
+				self.onLineProfileEditPress
+			)
+
+		if self.line_profile_edit_motion_cid is None:
+			self.line_profile_edit_motion_cid = self.canvas.mpl_connect(
+				"motion_notify_event",
+				self.onLineProfileEditMotion
+			)
+
+		if self.line_profile_edit_release_cid is None:
+			self.line_profile_edit_release_cid = self.canvas.mpl_connect(
+				"button_release_event",
+				self.onLineProfileEditRelease
+			)
+
+	def disconnectLineProfileEditConnections(self):
+		if self.line_profile_edit_press_cid is not None:
+			self.canvas.mpl_disconnect(
+				self.line_profile_edit_press_cid
+			)
+			self.line_profile_edit_press_cid = None
+
+		if self.line_profile_edit_motion_cid is not None:
+			self.canvas.mpl_disconnect(
+				self.line_profile_edit_motion_cid
+			)
+			self.line_profile_edit_motion_cid = None
+
+		if self.line_profile_edit_release_cid is not None:
+			self.canvas.mpl_disconnect(
+				self.line_profile_edit_release_cid
+			)
+			self.line_profile_edit_release_cid = None
+
+	def onLineProfileEditPress(self, event):
+		if self.line_profile_selecting:
+			return
+
+		if event.inaxes != self.ax_real:
+			return
+
+		if event.button != 1:
+			return
+
+		if self.line_profile_start_artist is not None:
+			containsStart, _ = self.line_profile_start_artist.contains(
+				event
+			)
+
+			if containsStart:
+				self.line_profile_dragging_endpoint = "start"
+				self.line_profile_start_artist.set_markersize(11)
+				self.canvas.draw_idle()
+				return
+
+		if self.line_profile_end_artist is not None:
+			containsEnd, _ = self.line_profile_end_artist.contains(
+				event
+			)
+
+			if containsEnd:
+				self.line_profile_dragging_endpoint = "end"
+				self.line_profile_end_artist.set_markersize(11)
+				self.canvas.draw_idle()
+
+	def onLineProfileEditMotion(self, event):
+		if self.line_profile_dragging_endpoint is None:
+			return
+
+		if event.inaxes != self.ax_real:
+			return
+
+		if event.xdata is None or event.ydata is None:
+			return
+
+		x = float(event.xdata)
+		y = float(event.ydata)
+
+		if self.line_profile_dragging_endpoint == "start":
+			x, y = self.constrainLineProfilePoint(
+				self.line_profile_end,
+				x,
+				y,
+				event
+			)
+
+			self.line_profile_start = (x, y)
+
+		else:
+			x, y = self.constrainLineProfilePoint(
+				self.line_profile_start,
+				x,
+				y,
+				event
+			)
+
+			self.line_profile_end = (x, y)
+
+		self.updateLineProfileArtists()
+		self.updateLineProfileControls()
+
+		self.canvas.draw_idle()
+
+	def onLineProfileEditRelease(self, event):
+		if self.line_profile_dragging_endpoint is None:
+			return
+
+		if self.line_profile_start_artist is not None:
+			self.line_profile_start_artist.set_markersize(8)
+
+		if self.line_profile_end_artist is not None:
+			self.line_profile_end_artist.set_markersize(8)
+
+		self.line_profile_dragging_endpoint = None
+
+		self.calculateLineProfile()
+		self.updateLineProfileControls()
+
+		self.canvas.draw_idle()
+
+	def updateLineProfileArtists(self):
+		if self.line_profile_start is None:
+			return
+
+		if self.line_profile_end is None:
+			return
+
+		x1, y1 = self.line_profile_start
+		x2, y2 = self.line_profile_end
+
+		if self.line_profile_artist is not None:
+			self.line_profile_artist.set_data(
+				[x1, x2],
+				[y1, y2]
+			)
+
+		if self.line_profile_start_artist is not None:
+			self.line_profile_start_artist.set_data(
+				[x1],
+				[y1]
+			)
+
+		if self.line_profile_end_artist is not None:
+			self.line_profile_end_artist.set_data(
+				[x2],
+				[y2]
+			)
+
+	def updateLineProfileControls(self):
+		if self.line_profile_start is None:
+			return
+
+		if self.line_profile_end is None:
+			return
+
+		x1, y1 = self.line_profile_start
+		x2, y2 = self.line_profile_end
+
+		dx = x2 - x1
+		dy = y2 - y1
+
+		length = np.hypot(dx, dy)
+
+		angle = np.degrees(
+			np.arctan2(dy, dx)
+		)
+
+		self.line_profile_x1_input.setText(
+			f"{x1:.4f}"
+		)
+
+		self.line_profile_y1_input.setText(
+			f"{y1:.4f}"
+		)
+
+		self.line_profile_x2_input.setText(
+			f"{x2:.4f}"
+		)
+
+		self.line_profile_y2_input.setText(
+			f"{y2:.4f}"
+		)
+
+		self.line_profile_length_input.setText(
+			f"{length:.4f}"
+		)
+
+		self.line_profile_angle_input.setText(
+			f"{angle:.2f}"
+		)
+
+		self.line_profile_status_label.setText(
+			f"Length: {length:.4f} nm    "
+			f"Angle: {angle:.2f}°"
+		)
+
+	def setLineProfileGeometry(self, startPoint, endPoint):
+		x1, y1 = startPoint
+		x2, y2 = endPoint
+
+		length = np.hypot(
+			x2 - x1,
+			y2 - y1
+		)
+
+		if length <= 0:
+			self.line_profile_status_label.setText(
+				"Line length must be greater than zero."
+			)
+			return
+
+		halfL = self.L / 2
+
+		for x, y in (
+			(x1, y1),
+			(x2, y2)
+		):
+			if (
+				x < -halfL
+				or x > halfL
+				or y < -halfL
+				or y > halfL
+			):
+				self.line_profile_status_label.setText(
+					"The requested line extends outside the image."
+				)
+				return
+
+		self.line_profile_start = (
+			float(x1),
+			float(y1)
+		)
+
+		self.line_profile_end = (
+			float(x2),
+			float(y2)
+		)
+
+		self.drawStoredLineProfileSelection()
+		self.calculateLineProfile()
+		self.updateLineProfileControls()
+
+		self.line_profile_show_btn.setEnabled(True)
+
+		self.canvas.draw_idle()
+
+	def applyLineProfileEndpoints(self):
+		try:
+			x1 = float(
+				self.line_profile_x1_input.text()
+			)
+
+			y1 = float(
+				self.line_profile_y1_input.text()
+			)
+
+			x2 = float(
+				self.line_profile_x2_input.text()
+			)
+
+			y2 = float(
+				self.line_profile_y2_input.text()
+			)
+
+		except ValueError:
+			self.line_profile_status_label.setText(
+				"Enter valid numeric endpoint coordinates."
+			)
+			return
+
+		self.setLineProfileGeometry(
+			(x1, y1),
+			(x2, y2)
+		)
+
+	def applyLineProfileLengthAngle(self):
+		try:
+			x1 = float(
+				self.line_profile_x1_input.text()
+			)
+
+			y1 = float(
+				self.line_profile_y1_input.text()
+			)
+
+			length = float(
+				self.line_profile_length_input.text()
+			)
+
+			angleDegrees = float(
+				self.line_profile_angle_input.text()
+			)
+
+		except ValueError:
+			self.line_profile_status_label.setText(
+				"Enter valid numeric geometry values."
+			)
+			return
+
+		if length <= 0:
+			self.line_profile_status_label.setText(
+				"Line length must be greater than zero."
+			)
+			return
+
+		angleRadians = np.radians(
+			angleDegrees
+		)
+
+		x2 = (
+			x1
+			+ length * np.cos(angleRadians)
+		)
+
+		y2 = (
+			y1
+			+ length * np.sin(angleRadians)
+		)
+
+		self.setLineProfileGeometry(
+			(x1, y1),
+			(x2, y2)
+		)
+
+	def calculateLineProfile(self):
+		if self.line_profile_start is None:
+			return
+
+		if self.line_profile_end is None:
+			return
+
+		Z_display = np.asarray(
+			self.getFFTFilteredImage()
+		)
+
+		if Z_display.ndim != 2:
+			return
+
+		ny, nx = Z_display.shape
+
+		x1, y1 = self.line_profile_start
+		x2, y2 = self.line_profile_end
+
+		length = np.hypot(
+			x2 - x1,
+			y2 - y1
+		)
+
+		if length == 0:
+			return
+
+		pixelSpacing = self.L / max(nx - 1, 1)
+
+		numberSamples = max(
+			2,
+			int(np.ceil(length / pixelSpacing)) + 1
+		)
+
+		xPhysical = np.linspace(
+			x1,
+			x2,
+			numberSamples
+		)
+
+		yPhysical = np.linspace(
+			y1,
+			y2,
+			numberSamples
+		)
+
+		# convert physical coordinates from:
+		#   -L/2 ... +L/2
+		# into image-array coordinates:
+		#   0 ... N-1
+		xPixels = (
+			(xPhysical + self.L / 2)
+			/ self.L
+			* (nx - 1)
+		)
+
+		yPixels = (
+			(yPhysical + self.L / 2)
+			/ self.L
+			* (ny - 1)
+		)
+
+		profile = map_coordinates(
+			Z_display,
+			[yPixels, xPixels],
+			order=1,
+			mode="nearest"
+		)
+
+		distance = np.linspace(
+			0,
+			length,
+			numberSamples
+		)
+
+		self.line_profile_distance = distance
+		self.line_profile_values = profile
+		self.line_profile_source = self.fft_filter_display
+
+	def showLineProfile(self):
+		if self.line_profile_distance is None:
+			return
+
+		if self.line_profile_values is None:
+			return
+
+		if self.line_profile_dialog is not None:
+			try:
+				self.line_profile_dialog.close()
+			except Exception:
+				pass
+
+		dialog = QDialog(self)
+		dialog.setWindowTitle("PyAtoms line profile")
+		dialog.resize(700, 500)
+
+		layout = QVBoxLayout(dialog)
+
+		figure = plt.Figure(
+			figsize=(7, 4)
+		)
+
+		canvas = FigureCanvas(figure)
+
+		toolbar = NavigationToolbar(
+			canvas,
+			dialog
+		)
+
+		axis = figure.add_subplot(111)
+
+		axis.plot(
+			self.line_profile_distance,
+			self.line_profile_values
+		)
+
+		axis.set_xlabel(
+			"Distance along line (nm)"
+		)
+
+		axis.set_ylabel(
+			"Simulated topographic signal (arb. units)"
+		)
+
+		axis.set_title(
+			"Line profile"
+		)
+
+		figure.tight_layout()
+
+		x1, y1 = self.line_profile_start
+		x2, y2 = self.line_profile_end
+
+		length = np.hypot(
+			x2 - x1,
+			y2 - y1
+		)
+
+		infoLabel = QLabel(
+			"Start: (%.3f, %.3f) nm    "
+			"End: (%.3f, %.3f) nm    "
+			"Length: %.3f nm"
+			% (
+				x1,
+				y1,
+				x2,
+				y2,
+				length
+			)
+		)
+
+		saveButton = QPushButton(
+			"Save profile",
+			dialog
+		)
+
+		saveButton.clicked.connect(
+			self.saveLineProfile
+		)
+
+		closeButton = QPushButton(
+			"Close",
+			dialog
+		)
+
+		closeButton.clicked.connect(
+			dialog.close
+		)
+
+		buttonLayout = QHBoxLayout()
+		buttonLayout.addWidget(saveButton)
+		buttonLayout.addStretch(1)
+		buttonLayout.addWidget(closeButton)
+
+		layout.addWidget(toolbar)
+		layout.addWidget(canvas)
+		layout.addWidget(infoLabel)
+		layout.addLayout(buttonLayout)
+
+		canvas.draw()
+
+		self.line_profile_dialog = dialog
+
+		dialog.show()
+
+	def saveLineProfile(self):
+		if self.line_profile_distance is None:
+			return
+
+		if self.line_profile_values is None:
+			return
+
+		fileName, _ = QFileDialog.getSaveFileName(
+			self,
+			"Save line profile",
+			os.getcwd(),
+			"CSV files (*.csv)"
+		)
+
+		if fileName == "":
+			return
+
+		if not fileName.lower().endswith(".csv"):
+			fileName += ".csv"
+
+		data = np.column_stack(
+			(
+				self.line_profile_distance,
+				self.line_profile_values
+			)
+		)
+
+		x1, y1 = self.line_profile_start
+		x2, y2 = self.line_profile_end
+
+		header = (
+			"PyAtoms line profile\n"
+			"start_x_nm=%.8g, start_y_nm=%.8g\n"
+			"end_x_nm=%.8g, end_y_nm=%.8g\n"
+			"display=%s\n"
+			"distance_nm,signal_arb_units"
+			% (
+				x1,
+				y1,
+				x2,
+				y2,
+				self.line_profile_source
+			)
+		)
+
+		np.savetxt(
+			fileName,
+			data,
+			delimiter=",",
+			header=header,
+			comments="# "
+		)
+
+	def clearLineProfile(self):
+		self.stopLineProfileSelection()
+
+		# remove the visible line and endpoint handles
+		self.removeLineProfileArtists()
+
+		# stop listening for endpoint-dragging events
+		self.disconnectLineProfileEditConnections()
+
+		self.line_profile_dragging_endpoint = None
+		self.line_profile_preview = None
+
+		# clear stored line coordinates
+		self.line_profile_start = None
+		self.line_profile_end = None
+
+		# clear stored profile data
+		self.line_profile_distance = None
+		self.line_profile_values = None
+		self.line_profile_source = None
+
+		# disable Show profile because there is no line anymore
+		self.line_profile_show_btn.setEnabled(False)
+
+		# clear all numeric edit boxes
+		for widget in (
+			self.line_profile_x1_input,
+			self.line_profile_y1_input,
+			self.line_profile_x2_input,
+			self.line_profile_y2_input,
+			self.line_profile_length_input,
+			self.line_profile_angle_input
+		):
+			widget.clear()
+
+		self.line_profile_status_label.setText(
+			"No line selected."
+		)
+
+		# close the profile popup if it is open
+		if self.line_profile_dialog is not None:
+			try:
+				self.line_profile_dialog.close()
+			except Exception:
+				pass
+
+			self.line_profile_dialog = None
+
+		self.canvas.draw_idle()
+
 	def updateMoireCalcTabHeight(self):
 		current_page = self.moire_calc_tabs.currentWidget()
 
@@ -1756,7 +2948,7 @@ class SimulatorWidget(QWidget):
 
 		# Refresh the results after changing modes.
 		self.updateMoireCalcDisplays()
-		
+
 		QTimer.singleShot(0, self.updateMoireCalcTabHeight)
 
 	def findMissingMoireValue(self):
@@ -3663,7 +4855,11 @@ class SimulatorWidget(QWidget):
 		self.figure = plt.figure(figsize=(10,10))
 
 		# Create a grid to plot mutiple plots on
-		self.grid = GridSpec(nrows=1,ncols=2)
+		self.grid = GridSpec(
+			nrows=1,
+			ncols=2,
+			wspace=0.50
+		)
 
 		groupbox = QGroupBox()
 
@@ -3847,6 +5043,12 @@ class SimulatorWidget(QWidget):
 		# clearing old figure
 		self.figure.clear()
 
+		# old line-profile artists belonged to the axes that were just deleted
+		self.line_profile_artist = None
+		self.line_profile_start_artist = None
+		self.line_profile_end_artist = None
+		self.line_profile_preview = None
+
 		# reset FFT selection patches after rebuilding the figure
 		self.fft_selection_patches = []
 
@@ -3979,7 +5181,7 @@ class SimulatorWidget(QWidget):
 
 		fig2 = self.ax_fft.imshow(self.fftZ, cmap = self.colormap_FFT, extent=[extL, extR, extL, extR],vmax = self.vmax_fft,origin='lower')		
 		self.ax_fft.set_xlabel('$k_x$ (nm⁻¹)')
-		self.ax_fft.set_ylabel('$k_y$ (nm⁻¹)', labelpad= -5)#20) 
+		self.ax_fft.set_ylabel('$k_y$ (nm⁻¹)')#20) 
 		self.ax_fft.set_title('FFT')
 		self.ax_fft.grid(False)
 
@@ -4036,7 +5238,19 @@ class SimulatorWidget(QWidget):
 		if fft_selection_was_enabled:
 			self.createFFTSelector()
 
+		# redraw and recalculate a stored line profile after rebuilding the axes
+		if (
+			self.line_profile_start is not None
+			and self.line_profile_end is not None
+		):
+			self.drawStoredLineProfileSelection()
+			self.calculateLineProfile()
 
+			if hasattr(
+				self,
+				"line_profile_length_input"
+			):
+				self.updateLineProfileControls()
 
 		self.canvas.draw()
 
@@ -4624,7 +5838,6 @@ class SimulatorWidget(QWidget):
 
 		# layout for the existing low pass filter tab
 		lowpass_layout = QVBoxLayout(self.lowpass_tab)
-		lowpass_layout.setAlignment(Qt.AlignTop)
 
 		hbox2 = QHBoxLayout()
 		hbox2.addWidget(self.sigma_label)
@@ -4640,9 +5853,10 @@ class SimulatorWidget(QWidget):
 
 		# groupBox.setLayout(vlayout)
 		lowpass_layout.addLayout(hbox)
+		lowpass_layout.addStretch(1)
 		lowpass_layout.addLayout(hbox2)
 
-		lowpass_layout.setSpacing(3)
+		lowpass_layout.setSpacing(6)
 
 		# layout for the 2D FFT filter tab
 		fft_filter_layout = QVBoxLayout(self.fft_filter_tab)
@@ -4766,8 +5980,6 @@ class SimulatorWidget(QWidget):
 
 		groupBox.setLayout(vlayout)
 
-		QTimer.singleShot(0, self.updateFilteringTabHeight)
-
 		return groupBox
 
 	def hideFFTSelections(self):
@@ -4776,25 +5988,6 @@ class SimulatorWidget(QWidget):
 
 		self.fft_selection_patches = []
 		self.canvas.draw_idle()
-
-
-	def updateFilteringTabHeight(self):
-		current_page = self.filter_tabs.currentWidget()
-
-		if current_page is None:
-			return
-
-		current_page.adjustSize()
-
-		page_height = current_page.sizeHint().height()
-		tab_height = self.filter_tabs.tabBar().sizeHint().height()
-
-		new_height = tab_height + page_height + 12
-
-		self.filter_tabs.setMinimumHeight(new_height)
-		self.filter_tabs.setMaximumHeight(new_height)
-
-		self.filter_tabs.updateGeometry()
 
 	def updateActiveFilterTab(self, index):
 		"""
@@ -4822,8 +6015,6 @@ class SimulatorWidget(QWidget):
 			# redraw any saved fft selections
 			self.drawFFTSelections()
 
-		QTimer.singleShot(0, self.updateFilteringTabHeight)
-
 	def toggleFFTPreciseDimensions(self, checked):
 		# self.fft_width_label.setVisible(checked)
 		self.fft_width_input.setVisible(checked)
@@ -4844,8 +6035,6 @@ class SimulatorWidget(QWidget):
 				self.fft_angle_input.setText(f"{selection['angle']:.2f}")
 
 		self.drawFFTSelections()
-
-		QTimer.singleShot(0, self.updateFilteringTabHeight)
 
 	def applyFFTPreciseDimensions(self):
 		"""
