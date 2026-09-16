@@ -174,6 +174,7 @@ class SimulatorWidget(QWidget):
 		self.line_profile_distance = None
 		self.line_profile_values = None
 		self.line_profile_source = None
+		self.line_profile_width_pixels = 1
 
 		self.line_profile_dialog = None
 
@@ -1683,6 +1684,14 @@ class SimulatorWidget(QWidget):
 		self.line_profile_length_input.setFixedWidth(70)
 		self.line_profile_angle_input.setFixedWidth(70)
 
+		self.line_profile_width_input = QSpinBox(self)
+		self.line_profile_width_input.setRange(1, 99)
+		self.line_profile_width_input.setValue(self.line_profile_width_pixels)
+		self.line_profile_width_input.setSuffix(" px")
+		self.line_profile_width_input.setFixedWidth(80)
+
+		self.line_profile_width_input.valueChanged.connect(self.updateLineProfileWidth)
+
 		geometryGrid.addWidget(
 			QLabel("Length:"),
 			0,
@@ -1717,6 +1726,18 @@ class SimulatorWidget(QWidget):
 			QLabel("deg"),
 			1,
 			2
+		)
+
+		geometryGrid.addWidget(
+			QLabel("Width:"),
+			2,
+			0
+		)
+
+		geometryGrid.addWidget(
+			self.line_profile_width_input,
+			2,
+			1
 		)
 
 		self.line_profile_apply_geometry_btn = QPushButton(
@@ -2253,7 +2274,8 @@ class SimulatorWidget(QWidget):
 
 		self.line_profile_status_label.setText(
 			f"Length: {length:.4f} nm    "
-			f"Angle: {angle:.2f}°"
+			f"Angle: {angle:.2f}°	"
+			f"Width: {self.line_profile_width_pixels} px"
 		)
 
 	def setLineProfileGeometry(self, startPoint, endPoint):
@@ -2384,6 +2406,16 @@ class SimulatorWidget(QWidget):
 			(x2, y2)
 		)
 
+	def updateLineProfileWidth(self, width):
+		self.line_profile_width_pixels = int(width)
+
+		if (
+			self.line_profile_start is not None
+			and self.line_profile_end is not None
+		):
+			self.calculateLineProfile()
+			self.updateLineProfileControls()
+
 	def calculateLineProfile(self):
 		if self.line_profile_start is None:
 			return
@@ -2446,12 +2478,42 @@ class SimulatorWidget(QWidget):
 			* (ny - 1)
 		)
 
-		profile = map_coordinates(
-			Z_display,
-			[yPixels, xPixels],
-			order=1,
-			mode="nearest"
-		)
+		# direction of the selected line in image-pixel coordinates
+		dxPixels = xPixels[-1] - xPixels[0]
+		dyPixels = yPixels[-1] - yPixels[0]
+
+		pixelLength = np.hypot(dxPixels, dyPixels)
+
+		if pixelLength == 0:
+			return
+
+		# unit vector perpendicualr to the selected line
+		normalX = -dyPixels / pixelLength
+		normalY = dxPixels / pixelLength
+
+		widthPixels = max(1, int(self.line_profile_width_pixels))
+
+		# center the averaging strip on the selected line (also works for even widths, in which case the individual sampling paths
+		# lie symmetricaly at half pixel offsets)
+		offsets = (np.arange(widthPixels, dtype=float) - (widthPixels - 1) / 2)
+
+		profiles = []
+
+		for offset in offsets:
+			sampleX = (xPixels + offset * normalX)
+
+			sampleY = (yPixels + offset * normalY)
+
+			sampledProfile = map_coordinates(
+				Z_display,
+				[sampleY, sampleX],
+				order=1,
+				mode="nearest"
+			)
+
+			profiles.append(sampledProfile)
+
+		profile = np.mean(np.asarray(profiles), axis=0)
 
 		distance = np.linspace(
 			0,
@@ -2525,13 +2587,15 @@ class SimulatorWidget(QWidget):
 		infoLabel = QLabel(
 			"Start: (%.3f, %.3f) nm    "
 			"End: (%.3f, %.3f) nm    "
-			"Length: %.3f nm"
+			"Length: %.3f nm	"
+			"Width: %d px"
 			% (
 				x1,
 				y1,
 				x2,
 				y2,
-				length
+				length,
+				self.line_profile_width_pixels
 			)
 		)
 
@@ -2603,6 +2667,7 @@ class SimulatorWidget(QWidget):
 			"PyAtoms line profile\n"
 			"start_x_nm=%.8g, start_y_nm=%.8g\n"
 			"end_x_nm=%.8g, end_y_nm=%.8g\n"
+			"width_pixels=%d\n"
 			"display=%s\n"
 			"distance_nm,signal_arb_units"
 			% (
@@ -2610,6 +2675,7 @@ class SimulatorWidget(QWidget):
 				y1,
 				x2,
 				y2,
+				self.line_profile_width_pixels,
 				self.line_profile_source
 			)
 		)
