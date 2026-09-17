@@ -1646,13 +1646,36 @@ class SimulatorWidget(QWidget):
 
 		return groupBox
 
+	def prepareNewLineProfile(self):
+		# save the currently active profile before starting anotehr one
+		if(self.line_profile_start is not None and self.line_profile_end is not None):
+			self.syncActiveLineProfile()
+
+		# leave the old artists on the plot BUT detach the single-profile editing state from them
+		self.line_profile_start = None
+		self.line_profile_end = None
+
+		self.line_profile_distance = None
+		self.line_profile_values = None
+		self.line_profile_source = None
+
+		self.line_profile_artist = None
+		self.line_profile_start_artist = None
+		self.line_profile_end_artist = None
+
+		self.active_line_profile_index = None
+
+		self.line_profile_dragging_endpoint = None
+
+		self.line_profile_drag_start_mouse = None
+		self.line_profile_drag_start_start = None
+		self.line_profile_drag_start_end = None
+
 	def toggleLineProfileSelection(self):
 		if self.line_profile_selecting:
 			self.stopLineProfileSelection()
 
-			self.line_profile_status_label.setText(
-				"Selection cancelled."
-			)
+			self.line_profile_status_label.setText("Selection cancelled.")
 
 			return
 
@@ -1667,12 +1690,12 @@ class SimulatorWidget(QWidget):
 
 			return
 
+		self.prepareNewLineProfile()
+
 		self.line_profile_selecting = True
 		self.line_profile_select_btn.setText("Cancel selection")
 
-		self.line_profile_status_label.setText(
-			"Click and drag across the real-space image."
-		)
+		self.line_profile_status_label.setText("Click and drag across the real-space image.")
 
 		self.line_profile_press_cid = self.canvas.mpl_connect(
 			"button_press_event",
@@ -1963,6 +1986,71 @@ class SimulatorWidget(QWidget):
 			)
 			self.line_profile_edit_release_cid = None
 
+	def findLineProfileAtEvent(self, event):
+		# search newest profiles first because they are drawn on top
+		for index in range(len(self.line_profiles) -1, -1, -1):
+			profile = self.line_profiles[index]
+
+			for artistName in (
+				"start_artist",
+				"end_artist",
+				"line_artist"
+			):
+				artist = profile.get(artistName, None)
+
+				if artist is None:
+					continue
+
+				try:
+					contains, _ = artist.contains(event)
+				except Exception:
+					continue
+
+				if contains:
+					return index
+
+		return None
+
+	def activateLineProfile(self, index):
+		if(index < 0 or index >= len(self.line_profiles)):
+			return
+
+		# save the currently active line before switching away from it
+		if (self.active_line_profile_index is not None and self.line_profile_start is not None and self.line_profile_end is not None):
+			self.syncActiveLineProfile()
+
+		profile = self.line_profiles[index]
+
+		self.active_line_profile_index = index
+
+		self.line_profile_start = tuple(profile["start"])
+
+		self.line_profile_end = tuple(profile["end"])
+
+		self.line_profile_width_pixels = int(profile["width_pixels"])
+
+		self.line_profile_distance = profile.get("distance")
+
+		self.line_profile_values = profile.get("values")
+
+		self.line_profile_source = profile.get("source")
+
+		self.line_profile_artist = profile.get("line_artist")
+
+		self.line_profile_start_artist = profile.get("start_artist")
+
+		self.line_profile_end_artist = profile.get("end_artist")
+
+		# update the width control without triggering its callback
+		if hasattr(self, "line_profile_width_input"):
+			self.line_profile_width_input.blockSignals(True)
+			self.line_profile_width_input.setValue(self.line_profile_width_pixels)
+			self.line_profile_width_input.blockSignals(False)
+
+		self.line_profile_show_btn.setEnabled(True)
+
+		self.updateLineProfileControls()
+
 	def onLineProfileEditPress(self, event):
 		if self.line_profile_selecting:
 			return
@@ -1973,8 +2061,13 @@ class SimulatorWidget(QWidget):
 		if event.button != 1:
 			return
 
-		if event.xdata is None or event.ydata is None:
+		clickedProfileIndex = self.findLineProfileAtEvent(event)
+
+		if clickedProfileIndex is None:
 			return
+
+		if(clickedProfileIndex != self.active_line_profile_index):
+			self.activateLineProfile(clickedProfileIndex)
 
 		if self.line_profile_start_artist is not None:
 			containsStart, _ = self.line_profile_start_artist.contains(
@@ -2633,9 +2726,23 @@ class SimulatorWidget(QWidget):
 		)
 
 	def clearLineProfile(self):
-		self.stopLineProfileSelection()
 
-		# remove the visible line and endpoint handles
+		# remove every stored line profile
+		for profile in self.line_profiles:
+			for artistName in (
+				"line_artist",
+				"start_artist",
+				"end_artist"
+			):
+				artist = profile.get(artistName)
+
+				if artist is not None:
+					try:
+						artist.remove()
+					except Exception:
+						pass
+
+		# also remove anything currently referenced by the active single profile state
 		self.removeLineProfileArtists()
 
 		# stop listening for endpoint-dragging events
