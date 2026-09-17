@@ -1255,6 +1255,8 @@ class SimulatorWidget(QWidget):
 		forward_widget = QWidget()
 		forward_layout = QGridLayout()
 
+		self.moire_forward_layout = forward_layout
+
 		# create labels for layers 1 and 2
 		lattice1_label = QLabel("Layer 1 lattice constant:")
 		lattice2_label = QLabel("Layer 2 lattice constant:")
@@ -1371,25 +1373,30 @@ class SimulatorWidget(QWidget):
 		forward_layout.addWidget(self.moire12_unit, 3, 2)
 
 		# add the trilayer rows
-		forward_layout.addWidget(self.moire_lattice3_label, 4, 0)
-		forward_layout.addWidget(self.moire_lattice3_display, 4, 1)
-		forward_layout.addWidget(self.moire_lattice3_unit, 4, 2)
 
-		forward_layout.addWidget(self.moire_twist23_label, 5, 0)
-		forward_layout.addWidget(self.moire_twist23_display, 5, 1)
-		forward_layout.addWidget(self.moire_twist23_unit, 5, 2)
+		# column 3 is an expandable gap b etween the two groups
+		forward_layout.setColumnStretch(3, 1)
 
-		forward_layout.addWidget(self.moire23_label, 6, 0)
-		forward_layout.addWidget(self.moire_wavelength23_display, 6, 1)
-		forward_layout.addWidget(self.moire23_unit, 6, 2)
+		# layer 3
+		forward_layout.addWidget(self.moire_lattice3_label, 0, 4)
+		forward_layout.addWidget(self.moire_lattice3_display, 0, 5)
+		forward_layout.addWidget(self.moire_lattice3_unit, 0, 6)
 
-		forward_layout.addWidget(self.moire_twist13_label, 7, 0)
-		forward_layout.addWidget(self.moire_twist13_display, 7, 1)
-		forward_layout.addWidget(self.moire_twist13_unit, 7, 2)
+		forward_layout.addWidget(self.moire_twist23_label, 1, 4)
+		forward_layout.addWidget(self.moire_twist23_display, 1, 5)
+		forward_layout.addWidget(self.moire_twist23_unit, 1, 6)
 
-		forward_layout.addWidget(self.moire13_label, 8, 0)
-		forward_layout.addWidget(self.moire_wavelength13_display, 8, 1)
-		forward_layout.addWidget(self.moire13_unit, 8, 2)
+		forward_layout.addWidget(self.moire23_label, 2, 4)
+		forward_layout.addWidget(self.moire_wavelength23_display, 2, 5)
+		forward_layout.addWidget(self.moire23_unit, 2, 6)
+
+		forward_layout.addWidget(self.moire_twist13_label, 3, 4)
+		forward_layout.addWidget(self.moire_twist13_display, 3, 5)
+		forward_layout.addWidget(self.moire_twist13_unit, 3, 6)
+
+		forward_layout.addWidget(self.moire13_label, 4, 4)
+		forward_layout.addWidget(self.moire_wavelength13_display, 4, 5)
+		forward_layout.addWidget(self.moire13_unit, 4, 6)
 
 		# Display the longest mixed square-hexagonal components.
 		self.mixed_moire_components_label = QLabel()
@@ -1397,7 +1404,7 @@ class SimulatorWidget(QWidget):
 		self.mixed_moire_components_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 		self.mixed_moire_components_label.hide()
 
-		forward_layout.addWidget(self.mixed_moire_components_label, 9, 0, 1, 3)
+		forward_layout.addWidget(self.mixed_moire_components_label, 5, 0, 1, 7)
 
 		forward_widget.setLayout(forward_layout)
 
@@ -1488,11 +1495,29 @@ class SimulatorWidget(QWidget):
 		inverse_layout.addWidget(self.inverse_moire12_input, 4, 1)
 		inverse_layout.addWidget(inverse_moire12_unit, 4, 2)
 
-		# add the buttons and messages
-		inverse_layout.addWidget(self.inverse_calculate_button, 5, 0, 1, 3)
-		inverse_layout.addWidget(self.inverse_apply_button, 6, 0, 1, 3)
-		inverse_layout.addWidget(self.inverse_status_label, 7, 0, 1, 3)
-		inverse_layout.addWidget(inverse_note, 8, 0, 1, 3)
+		# right side: calculation controls and messages
+		actionsWidget = QWidget()
+
+		actionsLayout = QVBoxLayout(actionsWidget)
+		actionsLayout.setContentsMargins(12, 0, 0, 0)
+		actionsLayout.setSpacing(6)
+		actionsLayout.setAlignment(Qt.AlignTop)
+
+		actionsLayout.addWidget(self.inverse_calculate_button)
+		actionsLayout.addWidget(self.inverse_apply_button)
+
+		actionsLayout.addSpacing(6)
+		actionsLayout.addWidget(self.inverse_status_label)
+		actionsLayout.addWidget(inverse_note)
+
+		# place the actions beside the input rows
+		inverse_layout.addWidget(actionsWidget, 0, 3, 5, 1)
+
+		# let the right side actions area use the spare horizontal space
+		inverse_layout.setColumnStretch(0, 0)
+		inverse_layout.setColumnStretch(1, 0)
+		inverse_layout.setColumnStretch(2, 0)
+		inverse_layout.setColumnStretch(3, 1)
 
 		inverse_widget.setLayout(inverse_layout)
 
@@ -1523,10 +1548,10 @@ class SimulatorWidget(QWidget):
 
 		mainLayout = QHBoxLayout()
 		mainLayout.setContentsMargins(8, 8, 8, 8)
-		mainLayout.setSpacing(14)
+		mainLayout.setSpacing(20)
 		mainLayout.setAlignment(Qt.AlignTop)
 
-		# left: selection controls
+		# left side: description and line selection controls
 		selectionWidget = QWidget()
 		selectionLayout = QVBoxLayout(selectionWidget)
 		selectionLayout.setContentsMargins(0, 0, 0, 0)
@@ -1534,43 +1559,33 @@ class SimulatorWidget(QWidget):
 		selectionLayout.setAlignment(Qt.AlignTop)
 
 		description = QLabel(
-			"Draw and edit a line on the real-space image to "
-			"extract the simulated signal along that path."
+			"Draw a line on the real-space image to extract "
+			"the simulated signal along that path."
 		)
 		description.setWordWrap(True)
 		description.setMaximumWidth(420)
-
 
 		self.line_profile_select_btn = QPushButton(
 			"Select line",
 			self
 		)
 		self.line_profile_select_btn.setAutoDefault(False)
-		self.line_profile_select_btn.clicked.connect(
-			self.toggleLineProfileSelection
-		)
+		self.line_profile_select_btn.clicked.connect(self.toggleLineProfileSelection)
 
 		self.line_profile_clear_btn = QPushButton(
 			"Clear line",
 			self
 		)
 		self.line_profile_clear_btn.setAutoDefault(False)
-		self.line_profile_clear_btn.clicked.connect(
-			self.clearLineProfile
-		)
+		self.line_profile_clear_btn.clicked.connect(self.clearLineProfile)
 
 		selectionButtons = QHBoxLayout()
-		selectionButtons.addWidget(
-			self.line_profile_select_btn
-		)
-		selectionButtons.addWidget(
-			self.line_profile_clear_btn
-		)
+		selectionButtons.addWidget(self.line_profile_select_btn)
+		selectionButtons.addWidget(self.line_profile_clear_btn)
 
 		hintLabel = QLabel(
-			"Drag either endpoint to edit. "
-			"Hold Shift while drawing or dragging "
-			"to snap horizontally or vertically."
+			"Drag either endpoint to resize the profile. "
+			"Drag the line itself to move the entire profile."
 		)
 		hintLabel.setWordWrap(True)
 		hintLabel.setMaximumWidth(420)
@@ -1579,178 +1594,27 @@ class SimulatorWidget(QWidget):
 		selectionLayout.addLayout(selectionButtons)
 		selectionLayout.addWidget(hintLabel)
 
-		# middle: endpoints
-		endpointsWidget = QWidget()
-		endpointsLayout = QVBoxLayout(endpointsWidget)
-		endpointsLayout.setContentsMargins(0, 0, 0, 0)
-		endpointsLayout.setSpacing(6)
-		endpointsLayout.setAlignment(Qt.AlignTop)
+		# right side: width and output controls
+		outputWidget = QWidget()
+		outputLayout = QVBoxLayout(outputWidget)
+		outputLayout.setContentsMargins(0, 0, 0, 0)
+		outputLayout.setSpacing(6)
+		outputLayout.setAlignment(Qt.AlignTop)
 
-		endpointsLabel = QLabel("Endpoints")
+		widthLayout = QHBoxLayout()
 
-		coordinateGrid = QGridLayout()
-		coordinateGrid.setHorizontalSpacing(6)
-		coordinateGrid.setVerticalSpacing(6)
-
-		self.line_profile_x1_input = QLineEdit(self)
-		self.line_profile_y1_input = QLineEdit(self)
-		self.line_profile_x2_input = QLineEdit(self)
-		self.line_profile_y2_input = QLineEdit(self)
-
-		for widget in (
-			self.line_profile_x1_input,
-			self.line_profile_y1_input,
-			self.line_profile_x2_input,
-			self.line_profile_y2_input
-		):
-			widget.setFixedWidth(70)
-
-		coordinateGrid.addWidget(
-			QLabel("x (nm)"),
-			0,
-			1
-		)
-
-		coordinateGrid.addWidget(
-			QLabel("y (nm)"),
-			0,
-			2
-		)
-
-		coordinateGrid.addWidget(
-			QLabel("Start:"),
-			1,
-			0
-		)
-
-		coordinateGrid.addWidget(
-			self.line_profile_x1_input,
-			1,
-			1
-		)
-
-		coordinateGrid.addWidget(
-			self.line_profile_y1_input,
-			1,
-			2
-		)
-
-		coordinateGrid.addWidget(
-			QLabel("End:"),
-			2,
-			0
-		)
-
-		coordinateGrid.addWidget(
-			self.line_profile_x2_input,
-			2,
-			1
-		)
-
-		coordinateGrid.addWidget(
-			self.line_profile_y2_input,
-			2,
-			2
-		)
-
-		self.line_profile_apply_endpoints_btn = QPushButton(
-			"Apply endpoints",
-			self
-		)
-		self.line_profile_apply_endpoints_btn.setAutoDefault(False)
-		self.line_profile_apply_endpoints_btn.clicked.connect(
-			self.applyLineProfileEndpoints
-		)
-
-		endpointsLayout.addWidget(endpointsLabel)
-		endpointsLayout.addLayout(coordinateGrid)
-		endpointsLayout.addWidget(
-			self.line_profile_apply_endpoints_btn
-		)
-
-		# right: geometry / output
-		geometryWidget = QWidget()
-		geometryLayout = QVBoxLayout(geometryWidget)
-		geometryLayout.setContentsMargins(0, 0, 0, 0)
-		geometryLayout.setSpacing(6)
-		geometryLayout.setAlignment(Qt.AlignTop)
-
-		geometryLabel = QLabel("Geometry")
-
-		geometryGrid = QGridLayout()
-		geometryGrid.setHorizontalSpacing(6)
-		geometryGrid.setVerticalSpacing(6)
-
-		self.line_profile_length_input = QLineEdit(self)
-		self.line_profile_angle_input = QLineEdit(self)
-
-		self.line_profile_length_input.setFixedWidth(70)
-		self.line_profile_angle_input.setFixedWidth(70)
+		widthLabel = QLabel("Width:")
 
 		self.line_profile_width_input = QSpinBox(self)
 		self.line_profile_width_input.setRange(1, 99)
 		self.line_profile_width_input.setValue(self.line_profile_width_pixels)
 		self.line_profile_width_input.setSuffix(" px")
 		self.line_profile_width_input.setFixedWidth(80)
-
 		self.line_profile_width_input.valueChanged.connect(self.updateLineProfileWidth)
 
-		geometryGrid.addWidget(
-			QLabel("Length:"),
-			0,
-			0
-		)
-
-		geometryGrid.addWidget(
-			self.line_profile_length_input,
-			0,
-			1
-		)
-
-		geometryGrid.addWidget(
-			QLabel("nm"),
-			0,
-			2
-		)
-
-		geometryGrid.addWidget(
-			QLabel("Angle:"),
-			1,
-			0
-		)
-
-		geometryGrid.addWidget(
-			self.line_profile_angle_input,
-			1,
-			1
-		)
-
-		geometryGrid.addWidget(
-			QLabel("deg"),
-			1,
-			2
-		)
-
-		geometryGrid.addWidget(
-			QLabel("Width:"),
-			2,
-			0
-		)
-
-		geometryGrid.addWidget(
-			self.line_profile_width_input,
-			2,
-			1
-		)
-
-		self.line_profile_apply_geometry_btn = QPushButton(
-			"Apply length / angle",
-			self
-		)
-		self.line_profile_apply_geometry_btn.setAutoDefault(False)
-		self.line_profile_apply_geometry_btn.clicked.connect(
-			self.applyLineProfileLengthAngle
-		)
+		widthLayout.addWidget(widthLabel)
+		widthLayout.addWidget(self.line_profile_width_input)
+		widthLayout.addStretch(1)
 
 		self.line_profile_show_btn = QPushButton(
 			"Show profile",
@@ -1758,32 +1622,19 @@ class SimulatorWidget(QWidget):
 		)
 		self.line_profile_show_btn.setAutoDefault(False)
 		self.line_profile_show_btn.setEnabled(False)
-		self.line_profile_show_btn.clicked.connect(
-			self.showLineProfile
-		)
+		self.line_profile_show_btn.clicked.connect(self.showLineProfile)
 
 		self.line_profile_status_label = QLabel(
 			"No line selected."
 		)
 		self.line_profile_status_label.setWordWrap(True)
 
-		geometryLayout.addWidget(geometryLabel)
-		geometryLayout.addLayout(geometryGrid)
-		geometryLayout.addWidget(
-			self.line_profile_apply_geometry_btn
-		)
-		geometryLayout.addWidget(
-			self.line_profile_show_btn
-		)
-		geometryLayout.addWidget(
-			self.line_profile_status_label
-		)
+		outputLayout.addWidget(self.line_profile_show_btn)
+		outputLayout.addWidget(self.line_profile_status_label)
 
-
-		# assemble!
+		# assemble the two sections
 		mainLayout.addWidget(selectionWidget, 3)
-		mainLayout.addWidget(endpointsWidget, 2)
-		mainLayout.addWidget(geometryWidget, 2)
+		mainLayout.addWidget(outputWidget, 2)
 
 		groupBox.setLayout(mainLayout)
 
@@ -2382,32 +2233,8 @@ class SimulatorWidget(QWidget):
 			np.arctan2(dy, dx)
 		)
 
-		self.line_profile_x1_input.setText(
-			f"{x1:.4f}"
-		)
-
-		self.line_profile_y1_input.setText(
-			f"{y1:.4f}"
-		)
-
-		self.line_profile_x2_input.setText(
-			f"{x2:.4f}"
-		)
-
-		self.line_profile_y2_input.setText(
-			f"{y2:.4f}"
-		)
-
-		self.line_profile_length_input.setText(
-			f"{length:.4f}"
-		)
-
-		self.line_profile_angle_input.setText(
-			f"{angle:.2f}"
-		)
-
 		self.line_profile_status_label.setText(
-			f"Length: {length:.4f} nm    "
+			f"Length: {length:.4f} nm	"
 			f"Angle: {angle:.2f}°	"
 			f"Width: {self.line_profile_width_pixels} px"
 		)
@@ -2831,7 +2658,12 @@ class SimulatorWidget(QWidget):
 		# stop listening for endpoint-dragging events
 		self.disconnectLineProfileEditConnections()
 
+		# clear dragging state
 		self.line_profile_dragging_endpoint = None
+		self.line_profile_drag_start_mouse = None
+		self.line_profile_drag_start_start = None
+		self.line_profile_drag_start_end = None
+
 		self.line_profile_preview = None
 
 		# clear stored line coordinates
@@ -2846,20 +2678,7 @@ class SimulatorWidget(QWidget):
 		# disable Show profile because there is no line anymore
 		self.line_profile_show_btn.setEnabled(False)
 
-		# clear all numeric edit boxes
-		for widget in (
-			self.line_profile_x1_input,
-			self.line_profile_y1_input,
-			self.line_profile_x2_input,
-			self.line_profile_y2_input,
-			self.line_profile_length_input,
-			self.line_profile_angle_input
-		):
-			widget.clear()
-
-		self.line_profile_status_label.setText(
-			"No line selected."
-		)
+		self.line_profile_status_label.setText("No line selected.")
 
 		# close the profile popup if it is open
 		if self.line_profile_dialog is not None:
@@ -2873,22 +2692,7 @@ class SimulatorWidget(QWidget):
 		self.canvas.draw_idle()
 
 	def updateMoireCalcTabHeight(self):
-		current_page = self.moire_calc_tabs.currentWidget()
-
-		if current_page is None:
-			return
-
-		current_page.adjustSize()
-
-		page_height = current_page.sizeHint().height()
-		tab_height = self.moire_calc_tabs.tabBar().sizeHint().height()
-
-		new_height = tab_height + page_height + 12
-
-		self.moire_calc_tabs.setMinimumHeight(new_height)
-		self.moire_calc_tabs.setMaximumHeight(new_height)
-
-		self.moire_calc_tabs.updateGeometry()
+		return
 
 	def updateInverseMoirePair(self):
 		"""
@@ -3145,6 +2949,30 @@ class SimulatorWidget(QWidget):
 		self.moire13_label.setVisible(trilayer_visible and not pair13_mixed)
 		self.moire_wavelength13_display.setVisible(trilayer_visible and not pair13_mixed)
 		self.moire13_unit.setVisible(trilayer_visible and not pair13_mixed)
+		
+		for row in range(6):
+			self.moire_forward_layout.setRowStretch(row, 0)
+
+		visible_rows = [
+			0, # layer 1 lattice constant
+			1, # layer 2 lattice constant
+			2 # twist 12
+		]
+
+		# row 3 contains lambda12 unless that pair is mixed
+		if not pair12_mixed:
+			visible_rows.append(3)
+
+		if trilayer_visible:
+			if 3 not in visible_rows:
+				visible_rows.append(3)
+
+			# row 4 contains lambda13 when that sclar result is valid
+			if not pair13_mixed:
+				visible_rows.append(4)
+
+		for row in visible_rows:
+			self.moire_forward_layout.setRowStretch(row, 1)
 
 		# Refresh the results after changing modes.
 		self.updateMoireCalcDisplays()
@@ -6139,11 +5967,24 @@ class SimulatorWidget(QWidget):
 		self.fft_clear_btn.setToolTip("Clear all FFT selections")
 		self.fft_clear_btn.clicked.connect(self.clearFFTSelections)
 
+		# main FFT selection controls
 		fft_selection_layout = QHBoxLayout()
+
+		fft_selection_layout.addWidget(self.fft_select_btn)
 		fft_selection_layout.addWidget(self.fft_undo_btn)
 		fft_selection_layout.addWidget(self.fft_clear_btn)
 
+		# selection options
+		fft_options_layout = QHBoxLayout()
+
+		fft_options_layout.addWidget(self.fft_snap_origin_checkbox)
+		fft_options_layout.addWidget(self.fft_precise_checkbox)
+
+		fft_options_layout.addStretch(1)
+
+		# precise-dimension controls
 		fft_size_layout = QHBoxLayout()
+
 		# fft_size_layout.addWidget(self.fft_width_label)
 		fft_size_layout.addWidget(self.fft_width_input)
 		fft_size_layout.addWidget(self.fft_width_unit_label)
@@ -6165,14 +6006,11 @@ class SimulatorWidget(QWidget):
 		self.fft_angle_unit_label.setVisible(False)
 		self.fft_apply_size_btn.setVisible(False)
 
-		fft_filter_layout.addWidget(self.fft_select_btn)
-		fft_filter_layout.addWidget(self.fft_snap_origin_checkbox)
-		fft_filter_layout.addWidget(self.fft_precise_checkbox)
-		fft_filter_layout.addLayout(fft_size_layout)
 		fft_filter_layout.addLayout(fft_selection_layout)
+		fft_filter_layout.addLayout(fft_options_layout)
+		fft_filter_layout.addLayout(fft_size_layout)
 		fft_filter_layout.addLayout(fft_display_layout)
-
-		fft_filter_layout.setSpacing(3)
+		fft_filter_layout.setSpacing(4)
 
 		# add the filtering tabs to the outer group box
 		vlayout = QVBoxLayout()

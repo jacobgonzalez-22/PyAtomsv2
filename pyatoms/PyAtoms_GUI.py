@@ -255,6 +255,9 @@ class Window(QMainWindow):
         analysisToolsLayout.setVerticalSpacing(6)
         analysisToolsLayout.setAlignment(Qt.AlignTop)
 
+        analysisToolsLayout.setColumnStretch(0, 1)
+        analysisToolsLayout.setColumnStretch(1, 1)
+
         moireCalculatorWidget.setSizePolicy(
             QSizePolicy.Expanding,
             QSizePolicy.Expanding
@@ -265,39 +268,24 @@ class Window(QMainWindow):
             QSizePolicy.Expanding
         )
 
-        analysisToolsLayout.setRowStretch(0, 0)
-        analysisToolsLayout.setRowStretch(1, 0)
-
         lineProfileWidget.setSizePolicy(
             QSizePolicy.Expanding,
             QSizePolicy.Maximum
         )
 
         # Top row
-        analysisToolsLayout.addWidget(
-            moireCalculatorWidget,
-            0,
-            0
-        )
+        analysisToolsLayout.addWidget(moireCalculatorWidget, 0, 0)
 
-        analysisToolsLayout.addWidget(
-            filteringWidget,
-            0,
-            1
-        )
+        analysisToolsLayout.addWidget(filteringWidget, 1, 0)
 
         # Bottom row: line profile spans the full width
-        analysisToolsLayout.addWidget(
-            lineProfileWidget,
-            1,
-            0,
-            1,
-            2,
-            Qt.AlignTop
-        )
+        analysisToolsLayout.addWidget(lineProfileWidget, 0, 1, 2, 1, Qt.AlignTop)
 
         analysisToolsLayout.setColumnStretch(0, 1)
         analysisToolsLayout.setColumnStretch(1, 1)
+
+        analysisToolsLayout.setRowStretch(0, 1)
+        analysisToolsLayout.setRowStretch(1, 0)
 
 
         # add both pages
