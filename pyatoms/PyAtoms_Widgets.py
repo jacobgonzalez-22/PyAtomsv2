@@ -1640,35 +1640,6 @@ class SimulatorWidget(QWidget):
 
 		return groupBox
 
-	def constrainLineProfilePoint(self, fixedPoint, x, y, event):
-		modifiers = QApplication.keyboardModifiers()
-
-		try:
-			shiftPressed = bool(
-				modifiers & Qt.ShiftModifier
-			)
-		except AttributeError:
-			shiftPressed = bool(
-				modifiers & Qt.KeyboardModifier.ShiftModifier
-			)
-
-		if not shiftPressed:
-			return x, y
-
-		fixedX, fixedY = fixedPoint
-
-		dx = x - fixedX
-		dy = y - fixedY
-
-		if abs(dx) >= abs(dy):
-			# snap horizontal
-			y = fixedY
-		else:
-			# snap vertical
-			x = fixedX
-
-		return x, y
-
 	def toggleLineProfileSelection(self):
 		if self.line_profile_selecting:
 			self.stopLineProfileSelection()
@@ -1799,15 +1770,9 @@ class SimulatorWidget(QWidget):
 			return
 
 		x1, y1 = self.line_profile_start
+
 		x2 = float(event.xdata)
 		y2 = float(event.ydata)
-
-		x2, y2 = self.constrainLineProfilePoint(
-			self.line_profile_start,
-			x2,
-			y2,
-			event
-		)
 
 		self.line_profile_preview.set_data(
 			[x1, x2],
@@ -1832,13 +1797,6 @@ class SimulatorWidget(QWidget):
 		x1, y1 = self.line_profile_start
 		x2 = float(event.xdata)
 		y2 = float(event.ydata)
-
-		x2, y2 = self.constrainLineProfilePoint(
-			self.line_profile_start,
-			x2,
-			y2,
-			event
-		)
 
 		length = np.hypot(
 			x2 - x1,
@@ -2076,24 +2034,9 @@ class SimulatorWidget(QWidget):
 
 		# move only the start endpoint
 		if self.line_profile_dragging_endpoint == "start":
-			x, y = self.constrainLineProfilePoint(
-				self.line_profile_end,
-				x,
-				y,
-				event
-			)
-
 			self.line_profile_start = (x, y)
 
-		# move only the end endpoint
 		elif self.line_profile_dragging_endpoint == "end":
-			x, y = self.constrainLineProfilePoint(
-				self.line_profile_start,
-				x,
-				y,
-				event
-			)
-
 			self.line_profile_end = (x, y)
 
 		# move the entire line without changing its length or angle
