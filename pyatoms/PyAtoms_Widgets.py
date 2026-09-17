@@ -1576,15 +1576,25 @@ class SimulatorWidget(QWidget):
 		self.line_profile_select_btn.setAutoDefault(False)
 		self.line_profile_select_btn.clicked.connect(self.toggleLineProfileSelection)
 
-		self.line_profile_clear_btn = QPushButton(
-			"Clear line",
+		self.line_profile_delete_btn = QPushButton(
+			"Delete selected",
 			self
 		)
+
+		self.line_profile_delete_btn.setAutoDefault(False)
+		self.line_profile_delete_btn.setEnabled(False)
+
+		self.line_profile_delete_btn.clicked.connect(self.deleteSelectedLineProfile)
+
+		self.line_profile_clear_btn = QPushButton("Clear all", self)
+
 		self.line_profile_clear_btn.setAutoDefault(False)
+
 		self.line_profile_clear_btn.clicked.connect(self.clearLineProfile)
 
 		selectionButtons = QHBoxLayout()
 		selectionButtons.addWidget(self.line_profile_select_btn)
+		selectionButtons.addWidget(self.line_profile_delete_btn)
 		selectionButtons.addWidget(self.line_profile_clear_btn)
 
 		hintLabel = QLabel(
@@ -2048,6 +2058,7 @@ class SimulatorWidget(QWidget):
 			self.line_profile_width_input.blockSignals(False)
 
 		self.line_profile_show_btn.setEnabled(True)
+		self.line_profile_delete_btn.setEnabled(True)
 
 		self.updateLineProfileControls()
 
@@ -2362,6 +2373,7 @@ class SimulatorWidget(QWidget):
 		self.syncActiveLineProfile()
 		self.updateLineProfileControls()
 		self.line_profile_show_btn.setEnabled(True)
+		self.line_profile_delete_btn.setEnabled(True)
 		self.canvas.draw_idle()
 
 	def applyLineProfileEndpoints(self):
@@ -2725,6 +2737,76 @@ class SimulatorWidget(QWidget):
 			comments="# "
 		)
 
+	def deleteSelectedLineProfile(self):
+		if self.active_line_profile_index is None:
+			return
+
+		if len(self.line_profiles) == 0:
+			return
+
+		index = self.active_line_profile_index
+
+		if index < 0 or index >= len(self.line_profiles):
+			return	
+
+		profile = self.line_profiles[index]
+
+		# remvoe the selected profile's artists
+		for artistName in (
+			"line_artist",
+			"start_artist",
+			"end_artist"
+		):
+			artist = profile.get(artistName)
+
+			if artist is not None:
+				try:
+					artist.remove()
+				except Exception:
+					pass
+
+		# remove the profile from storage
+		self.line_profiles.pop(index)
+
+		# renumber the remaining profiles
+		for number, remainingProfile in enumerate(self.line_profiles, start=1):
+			remainingProfile["number"] = number
+
+		self.line_profile_next_number = len(self.line_profiles) + 1
+
+		# nothing remains
+		self.active_line_profile_index = None
+
+		self.line_profile_start = None
+		self.line_profile_end = None
+
+		self.line_profile_distance = None
+		self.line_profile_values = None
+		self.line_profile_source = None
+
+		self.line_profile_artist = None
+		self.line_profile_start_artist = None
+		self.line_profile_end_artist = None
+
+	
+		if len(self.line_profiles) == 0:
+			self.line_profile_show_btn.setEnabled(False)
+			self.line_profile_delete_btn.setEnabled(False)
+
+			self.line_profile_status_label.setText("No line selected.")
+
+			self.canvas.draw_idle()
+
+			return
+
+		# select the closest remaining profile
+		newIndex = min(index, len(self.line_profiles) - 1)
+
+		self.activateLineProfile(newIndex)
+
+		self.canvas.draw_idle()
+		
+
 	def clearLineProfile(self):
 
 		# remove every stored line profile
@@ -2771,6 +2853,7 @@ class SimulatorWidget(QWidget):
 
 		# disable Show profile because there is no line anymore
 		self.line_profile_show_btn.setEnabled(False)
+		self.line_profile_delete_btn.setEnabled(False)
 
 		self.line_profile_status_label.setText("No line selected.")
 
