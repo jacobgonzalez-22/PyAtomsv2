@@ -2039,24 +2039,53 @@ class SimulatorWidget(QWidget):
 			linewidth=2
 		)
 
+		dx = x2 - x1
+		dy = y2 - y1
+		length = np.hypot(dx, dy)
+
+		if length == 0:
+			return
+
+		# unit vec perp to profile line
+		normalX = -dy / length
+		normalY = dx / length
+
+		capHalfLength = 0.008 * self.L
+
+		startCapX = [
+			x1 - capHalfLength * normalX,
+			x1 + capHalfLength * normalX
+		]
+
+		startCapY = [
+			y1 - capHalfLength * normalY,
+			y1 + capHalfLength * normalY
+		]
+
+		endCapX = [
+			x2 - capHalfLength * normalX,
+			x2 + capHalfLength * normalX
+		]
+
+		endCapY = [
+			y2 - capHalfLength * normalY,
+			y2 + capHalfLength * normalY
+		]
+
 		self.line_profile_start_artist, = self.ax_real.plot(
-			[x1],
-			[y1],
-			marker="o",
-			markersize=8,
+			startCapX,
+			startCapY,
 			color="cyan",
-			markeredgecolor="black",
+			linewidth=2,
 			picker=8
 		)
 
 		self.line_profile_end_artist, = self.ax_real.plot(
-			[x2],
-			[y2],
-			marker="o",
-			markersize=8,
-			color="cyan",
-			markeredgecolor="black",
-			picker=8
+				endCapX,
+				endCapY,
+				color="cyan",
+				linewidth=2,
+				picker=8
 		)
 
 		self.ensureLineProfileEditConnections()
@@ -2132,7 +2161,7 @@ class SimulatorWidget(QWidget):
 
 			if containsStart:
 				self.line_profile_dragging_endpoint = "start"
-				self.line_profile_start_artist.set_markersize(11)
+				self.line_profile_start_artist.set_linewidth(3)
 				self.canvas.draw_idle()
 				return
 
@@ -2143,7 +2172,7 @@ class SimulatorWidget(QWidget):
 
 			if containsEnd:
 				self.line_profile_dragging_endpoint = "end"
-				self.line_profile_end_artist.set_markersize(11)
+				self.line_profile_end_artist.set_linewidth(3)
 				self.canvas.draw_idle()
 
 	def onLineProfileEditMotion(self, event):
@@ -2189,10 +2218,10 @@ class SimulatorWidget(QWidget):
 			return
 
 		if self.line_profile_start_artist is not None:
-			self.line_profile_start_artist.set_markersize(8)
+			self.line_profile_start_artist.set_linewidth(2)
 
 		if self.line_profile_end_artist is not None:
-			self.line_profile_end_artist.set_markersize(8)
+			self.line_profile_end_artist.set_linewidth(2)
 
 		self.line_profile_dragging_endpoint = None
 
@@ -2217,16 +2246,40 @@ class SimulatorWidget(QWidget):
 				[y1, y2]
 			)
 
+		dx = x2 - x1
+		dy = y2 - y1
+		length = np.hypot(dx, dy)
+
+		if length == 0:
+			return
+
+		normalX = -dy / length
+		normalY = dx / length
+
+		capHalfLength = 0.008 * self.L
+
 		if self.line_profile_start_artist is not None:
 			self.line_profile_start_artist.set_data(
-				[x1],
-				[y1]
+				[
+					x1 - capHalfLength * normalX,
+					x1 + capHalfLength * normalX
+				],
+				[
+					y1 - capHalfLength * normalY,
+					y1 + capHalfLength * normalY
+				]
 			)
 
 		if self.line_profile_end_artist is not None:
 			self.line_profile_end_artist.set_data(
-				[x2],
-				[y2]
+				[
+					x2 - capHalfLength * normalX,
+					x2 + capHalfLength * normalX
+				],
+				[
+					y2 - capHalfLength * normalY,
+					y2 + capHalfLength * normalY
+				]
 			)
 
 	def updateLineProfileControls(self):
