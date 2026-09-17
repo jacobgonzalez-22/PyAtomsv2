@@ -186,6 +186,10 @@ class SimulatorWidget(QWidget):
 		self.line_profile_drag_start_start = None
 		self.line_profile_drag_start_end = None
 
+		self.line_profiles = []
+		self.active_line_profile_index = None
+		self.line_profile_next_number = 1
+
 		self.line_profile_edit_press_cid = None
 		self.line_profile_edit_motion_cid = None
 		self.line_profile_edit_release_cid = None
@@ -1616,6 +1620,8 @@ class SimulatorWidget(QWidget):
 		widthLayout.addWidget(self.line_profile_width_input)
 		widthLayout.addStretch(1)
 
+		outputLayout.addLayout(widthLayout)
+
 		self.line_profile_show_btn = QPushButton(
 			"Show profile",
 			self
@@ -2101,6 +2107,7 @@ class SimulatorWidget(QWidget):
 		self.line_profile_drag_start_end = None
 
 		self.calculateLineProfile()
+		self.syncActiveLineProfile()
 		self.updateLineProfileControls()
 
 		self.canvas.draw_idle()
@@ -2182,6 +2189,39 @@ class SimulatorWidget(QWidget):
 			f"Width: {self.line_profile_width_pixels} px"
 		)
 
+	def syncActiveLineProfile(self):
+		if self.line_profile_start is None:
+			return
+
+		if self.line_profile_end is None:
+			return
+
+		profile = {
+			"start": self.line_profile_start,
+			"end": self.line_profile_end,
+			"width_pixels": self.line_profile_width_pixels,
+			"distance": self.line_profile_distance,
+			"values": self.line_profile_values,
+			"source": self.line_profile_source,
+			"line_artist": self.line_profile_artist,
+			"start_artist": self.line_profile_start_artist,
+			"end_artist": self.line_profile_end_artist
+		}
+
+		if self.active_line_profile_index is None:
+			profile["number"] = self.line_profile_next_number
+			
+			self.line_profiles.append(profile)
+
+			self.active_line_profile_index = len(self.line_profiles) - 1
+
+			self.line_profile_next_number += 1
+
+		else:
+			profile["number"] = self.line_profiles[self.active_line_profile_index]["number"]
+
+			self.line_profiles[self.active_line_profile_index] = profile
+
 	def setLineProfileGeometry(self, startPoint, endPoint):
 		x1, y1 = startPoint
 		x2, y2 = endPoint
@@ -2226,10 +2266,9 @@ class SimulatorWidget(QWidget):
 
 		self.drawStoredLineProfileSelection()
 		self.calculateLineProfile()
+		self.syncActiveLineProfile()
 		self.updateLineProfileControls()
-
 		self.line_profile_show_btn.setEnabled(True)
-
 		self.canvas.draw_idle()
 
 	def applyLineProfileEndpoints(self):
@@ -2318,6 +2357,7 @@ class SimulatorWidget(QWidget):
 			and self.line_profile_end is not None
 		):
 			self.calculateLineProfile()
+			self.syncActiveLineProfile()
 			self.updateLineProfileControls()
 
 	def calculateLineProfile(self):
@@ -2612,6 +2652,10 @@ class SimulatorWidget(QWidget):
 		# clear stored line coordinates
 		self.line_profile_start = None
 		self.line_profile_end = None
+
+		self.line_profiles = []
+		self.active_line_profile_index = None
+		self.line_profile_next_number = 1
 
 		# clear stored profile data
 		self.line_profile_distance = None
@@ -5216,6 +5260,7 @@ class SimulatorWidget(QWidget):
 		):
 			self.drawStoredLineProfileSelection()
 			self.calculateLineProfile()
+			self.syncActiveLineProfile()
 
 			if hasattr(
 				self,
