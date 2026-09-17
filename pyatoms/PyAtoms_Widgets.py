@@ -180,8 +180,11 @@ class SimulatorWidget(QWidget):
 
 		self.line_profile_start_artist = None
 		self.line_profile_end_artist = None
-
 		self.line_profile_dragging_endpoint = None
+
+		self.line_profile_drag_start_mouse = None
+		self.line_profile_drag_start_start = None
+		self.line_profile_drag_start_end = None
 
 		self.line_profile_edit_press_cid = None
 		self.line_profile_edit_motion_cid = None
@@ -2036,7 +2039,8 @@ class SimulatorWidget(QWidget):
 			[x1, x2],
 			[y1, y2],
 			color="cyan",
-			linewidth=2
+			linewidth=2,
+			picker=6
 		)
 
 		dx = x2 - x1
@@ -2154,6 +2158,9 @@ class SimulatorWidget(QWidget):
 		if event.button != 1:
 			return
 
+		if event.xdata is None or event.ydata is None:
+			return
+
 		if self.line_profile_start_artist is not None:
 			containsStart, _ = self.line_profile_start_artist.contains(
 				event
@@ -2161,7 +2168,9 @@ class SimulatorWidget(QWidget):
 
 			if containsStart:
 				self.line_profile_dragging_endpoint = "start"
+
 				self.line_profile_start_artist.set_linewidth(3)
+
 				self.canvas.draw_idle()
 				return
 
@@ -2172,7 +2181,33 @@ class SimulatorWidget(QWidget):
 
 			if containsEnd:
 				self.line_profile_dragging_endpoint = "end"
+
 				self.line_profile_end_artist.set_linewidth(3)
+
+				self.canvas.draw_idle()
+
+				return
+
+		# if neither endpoint was clicked, check the body of the line
+		if self.line_profile_artist is not None:
+			containsLine, _ = self.line_profile_artist.contains(
+				event
+			)
+
+			if containsLine:
+				self.line_profile_dragging_endpoint = "line"
+
+				self.line_profile_drag_start_mouse = (
+					float(event.xdata),
+					float(event.ydata)
+				)
+
+				self.line_profile_drag_start_start = (self.line_profile_start)
+
+				self.line_profile_drag_start_end = (self.line_profile_end)
+
+				self.line_profile_artist.set_linewidth(3)
+
 				self.canvas.draw_idle()
 
 	def onLineProfileEditMotion(self, event):
@@ -2188,6 +2223,7 @@ class SimulatorWidget(QWidget):
 		x = float(event.xdata)
 		y = float(event.ydata)
 
+		# move only the start endpoint
 		if self.line_profile_dragging_endpoint == "start":
 			x, y = self.constrainLineProfilePoint(
 				self.line_profile_end,
@@ -2198,7 +2234,8 @@ class SimulatorWidget(QWidget):
 
 			self.line_profile_start = (x, y)
 
-		else:
+		# move only the end endpoint
+		elif self.line_profile_dragging_endpoint == "end":
 			x, y = self.constrainLineProfilePoint(
 				self.line_profile_start,
 				x,
@@ -2207,6 +2244,43 @@ class SimulatorWidget(QWidget):
 			)
 
 			self.line_profile_end = (x, y)
+
+		# move the entire line without changing its length or angle
+		elif self.line_profile_dragging_endpoint == "line":
+			if self.line_profile_drag_start_mouse is None:
+				return
+
+			if self.line_profile_drag_start_start is None:
+				return
+
+			if self.line_profile_drag_start_end is None:
+				return
+
+			mouseStartX, mouseStartY = self.line_profile_drag_start_mouse
+
+			startX1, startY1 = self.line_profile_drag_start_start
+
+			startX2, startY2 = self.line_profile_drag_start_end
+
+			dx = x - mouseStartX
+			dy = y - mouseStartY
+
+			# restrict the translation so both endpoints remain inside the real-space image
+			halfL = self.L / 2
+
+			minDx = -halfL - min(startX1, startX2)
+			maxDx = halfL - max(startX1, startX2)
+
+			minDy = -halfL - min(startY1, startY2)
+			maxDy = halfL - max(startY1, startY2)
+
+
+			dx = np.clip(dx, minDx, maxDx)
+			dy = np.clip(dy, minDy, maxDy)
+
+			self.line_profile_start = (startX1 + dx, startY1 + dy)
+			self.line_profile_end = (startX2 + dx, startY2 + dy)
+
 
 		self.updateLineProfileArtists()
 		self.updateLineProfileControls()
@@ -2223,7 +2297,14 @@ class SimulatorWidget(QWidget):
 		if self.line_profile_end_artist is not None:
 			self.line_profile_end_artist.set_linewidth(2)
 
+		if self.line_profile_artist is not None:
+			self.line_profile_artist.set_linewidth(2)
+
 		self.line_profile_dragging_endpoint = None
+
+		self.line_profile_drag_start_mouse = None
+		self.line_profile_drag_start_start = None
+		self.line_profile_drag_start_end = None
 
 		self.calculateLineProfile()
 		self.updateLineProfileControls()
