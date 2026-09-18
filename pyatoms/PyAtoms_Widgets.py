@@ -180,6 +180,10 @@ class SimulatorWidget(QWidget):
 
 		self.line_profile_color = None
 
+		self.line_profile_show_numbers = True
+
+		self.line_profile_label_artist = None
+
 		self.line_profile_dialog = None
 
 		self.line_profile_start_artist = None
@@ -1635,11 +1639,17 @@ class SimulatorWidget(QWidget):
 		self.line_profile_width_input.setRange(1, 99)
 		self.line_profile_width_input.setValue(self.line_profile_width_pixels)
 		self.line_profile_width_input.setSuffix(" px")
-		self.line_profile_width_input.setFixedWidth(80)
+		self.line_profile_width_input.setFixedWidth(90)
 		self.line_profile_width_input.valueChanged.connect(self.updateLineProfileWidth)
+
+		self.line_profile_number_checkbox = QCheckBox("Number lines", self)
+		self.line_profile_number_checkbox.setChecked(self.line_profile_show_numbers)
+		self.line_profile_number_checkbox.toggled.connect(self.updateLineProfileNumberVisibility)
 
 		widthLayout.addWidget(widthLabel)
 		widthLayout.addWidget(self.line_profile_width_input)
+		widthLayout.addSpacing(12)
+		widthLayout.addWidget(self.line_profile_number_checkbox)
 		widthLayout.addStretch(1)
 
 		outputLayout.addLayout(widthLayout)
@@ -1704,6 +1714,22 @@ class SimulatorWidget(QWidget):
 
 		return groupBox
 
+	def updateLineProfileNumberVisibility(self, checked):
+		self.line_profile_show_numbers = bool(checked)
+
+		for profile in self.line_profiles:
+			labelArtist = profile.get("label_artist")
+
+			if labelArtist is not None:
+				labelArtist.set_visible(self.line_profile_show_numbers)
+
+
+		# also cover the currently active artist in case it has not been stored yet
+		if self.line_profile_label_artist is not None:
+			self.line_profile_label_artist.set_visible(self.line_profile_show_numbers)
+
+		self.canvas.draw_idle()
+
 	def prepareNewLineProfile(self):
 		# save the currently active profile before starting anotehr one
 		if(self.line_profile_start is not None and self.line_profile_end is not None):
@@ -1721,6 +1747,7 @@ class SimulatorWidget(QWidget):
 		self.line_profile_artist = None
 		self.line_profile_start_artist = None
 		self.line_profile_end_artist = None
+		self.line_profile_label_artist = None
 
 		self.active_line_profile_index = None
 
@@ -2011,7 +2038,7 @@ class SimulatorWidget(QWidget):
 
 			normalizedValues = np.asarray(normalizedValues, dtype=float)
 
-			normalizedVales = np.nan_to_num(normalizedValues, nan=0.5, posinf=1.0, neginf=0.0)
+			normalizedValues = np.nan_to_num(normalizedValues, nan=0.5, posinf=1.0, neginf=0.0)
 
 			cmap = plt.get_cmap(self.colormap_RS)
 
@@ -2043,10 +2070,13 @@ class SimulatorWidget(QWidget):
 			if artist is None:
 				continue
 
-			artist.set_path_effects([path_effects.Stroke(linewidth=4, foreground=outlineColor), path_effects.Normal()])
+			artist.set_path_effects([path_effects.Stroke(linewidth=2.5, foreground=outlineColor), path_effects.Normal()])
+
+		if self.line_profile_label_artist is not None:
+			self.line_profile_label_artist.set_path_effects([path_effects.Stroke(linewidth=2, foreground=outlineColor), path_effects.Normal()])
 
 
-	def createLineProfileArtists(self, startPoint, endPoint, color):
+	def createLineProfileArtists(self, startPoint, endPoint, color, number):
 		x1, y1 = startPoint
 		x2, y2 = endPoint
 
@@ -2054,7 +2084,7 @@ class SimulatorWidget(QWidget):
 			[x1, x2],
 			[y1, y2],
 			color=color,
-			linewidth=2,
+			linewidth=1.2,
 			picker=6
 		)
 
@@ -2065,12 +2095,43 @@ class SimulatorWidget(QWidget):
 		outlineColor = self.getLineProfileOutlineColor(startPoint, endPoint)
 
 		if length == 0:
-			lineArtist.set_path_effects([path_effects.Stroke(linewidth=4, foreground=outlineColor), path_effects.Normal()])
+			lineArtist.set_path_effects([path_effects.Stroke(linewidth=2.5, foreground=outlineColor), path_effects.Normal()])
 
-			return lineArtist, None, None
+			return lineArtist, None, None, None
 
 		normalX = -dy / length
 		normalY = dx / length
+
+		midX = (x1 + x2) / 2
+		midY = (y1 + y2) / 2
+
+		labelOffset = 0.025 * self.L
+
+		labelX = midX + labelOffset * normalX
+		labelY = midY + labelOffset * normalY
+
+		# keep the label inside the image
+		labelMargin = 0.025 * self.L
+		halfL = self.L / 2
+
+		labelX = np.clip(labelX, -halfL + labelMargin, halfL - labelMargin)
+		labelY = np.clip(labelY, -halfL + labelMargin, halfL - labelMargin)
+
+		labelArtist = self.ax_real.text(
+			labelX,
+			labelY,
+			str(number),
+			color=color,
+			fontweight="normal",
+			fontsize=7,
+			ha="center",
+			va="center",
+			zorder=10
+		)
+
+		labelArtist.set_visible(self.line_profile_show_numbers)
+
+		labelArtist.set_path_effects([path_effects.Stroke(linewidth=2, foreground=outlineColor), path_effects.Normal()])
 
 		capHalfLength = 0.008 * self.L
 
@@ -2098,7 +2159,7 @@ class SimulatorWidget(QWidget):
 			startCapX,
 			startCapY,
 			color=color,
-			linewidth=2,
+			linewidth=1.2,
 			picker=8
 		)
 
@@ -2106,14 +2167,14 @@ class SimulatorWidget(QWidget):
 			endCapX,
 			endCapY,
 			color=color,
-			linewidth=2,
+			linewidth=1.2,
 			picker=8
 		)
 
 		for artist in lineArtist, startArtist, endArtist:
-			artist.set_path_effects([path_effects.Stroke(linewidth=4, foreground=outlineColor), path_effects.Normal()])
+			artist.set_path_effects([path_effects.Stroke(linewidth=2.5, foreground=outlineColor), path_effects.Normal()])
 
-		return lineArtist, startArtist, endArtist
+		return lineArtist, startArtist, endArtist, labelArtist
 
 	def drawStoredLineProfileSelection(self):
 		if self.line_profile_start is None:
@@ -2127,10 +2188,16 @@ class SimulatorWidget(QWidget):
 		if self.line_profile_color is None:
 			self.line_profile_color = self.generateLineProfileColor()
 
-		self.line_profile_artist, self.line_profile_start_artist, self.line_profile_end_artist = self.createLineProfileArtists(
+		if self.active_line_profile_index is None:
+			profileNumber = self.line_profile_next_number
+		else:
+			profileNumber = self.line_profiles[self.active_line_profile_index]["number"]
+
+		self.line_profile_artist, self.line_profile_start_artist, self.line_profile_end_artist, self.line_profile_label_artist = self.createLineProfileArtists(
 			startPoint=self.line_profile_start,
 			endPoint=self.line_profile_end,
-			color=self.line_profile_color
+			color=self.line_profile_color,
+			number=profileNumber
 		)
 		self.ensureLineProfileEditConnections()
 
@@ -2151,11 +2218,12 @@ class SimulatorWidget(QWidget):
 
 				profile["color"] = profileColor
 
-			lineArtist, startArtist, endArtist = self.createLineProfileArtists(startPoint=startPoint, endPoint=endPoint, color=profileColor)
+			lineArtist, startArtist, endArtist, labelArtist = self.createLineProfileArtists(startPoint=startPoint, endPoint=endPoint, color=profileColor, number=profile["number"])
 
 			profile["line_artist"] = lineArtist
 			profile["start_artist"] = startArtist
 			profile["end_artist"] = endArtist
+			profile["label_artist"] = labelArtist
 
 			self.line_profile_color = tuple(profile["color"])
 			self.line_profile_start = tuple(profile["start"])
@@ -2182,6 +2250,7 @@ class SimulatorWidget(QWidget):
 			self.line_profile_start_artist = profile.get("start_artist")
 			self.line_profile_end_artist = profile.get("end_artist")
 			self.line_profile_color = tuple(profile["color"])
+			self.line_profile_label_artist = profile.get("label_artist")
 
 			if hasattr(self, "line_profile_width_input"):
 				self.line_profile_width_input.blockSignals(True)
@@ -2200,7 +2269,8 @@ class SimulatorWidget(QWidget):
 		for artistName in (
 			"line_profile_artist",
 			"line_profile_start_artist",
-			"line_profile_end_artist"
+			"line_profile_end_artist",
+			"line_profile_label_artist"
 		):
 			artist = getattr(self, artistName, None)
 
@@ -2314,6 +2384,8 @@ class SimulatorWidget(QWidget):
 
 		self.line_profile_end_artist = profile.get("end_artist")
 
+		self.line_profile_label_artist = profile.get("label_artist")
+
 		# update the width control without triggering its callback
 		if hasattr(self, "line_profile_width_input"):
 			self.line_profile_width_input.blockSignals(True)
@@ -2354,7 +2426,7 @@ class SimulatorWidget(QWidget):
 			if containsStart:
 				self.line_profile_dragging_endpoint = "start"
 
-				self.line_profile_start_artist.set_linewidth(3)
+				self.line_profile_start_artist.set_linewidth(1.7)
 
 				self.canvas.draw_idle()
 				return
@@ -2367,7 +2439,7 @@ class SimulatorWidget(QWidget):
 			if containsEnd:
 				self.line_profile_dragging_endpoint = "end"
 
-				self.line_profile_end_artist.set_linewidth(3)
+				self.line_profile_end_artist.set_linewidth(1.7)
 
 				self.canvas.draw_idle()
 
@@ -2391,7 +2463,7 @@ class SimulatorWidget(QWidget):
 
 				self.line_profile_drag_start_end = (self.line_profile_end)
 
-				self.line_profile_artist.set_linewidth(3)
+				self.line_profile_artist.set_linewidth(1.7)
 
 				self.canvas.draw_idle()
 
@@ -2462,13 +2534,13 @@ class SimulatorWidget(QWidget):
 			return
 
 		if self.line_profile_start_artist is not None:
-			self.line_profile_start_artist.set_linewidth(2)
+			self.line_profile_start_artist.set_linewidth(1.2)
 
 		if self.line_profile_end_artist is not None:
-			self.line_profile_end_artist.set_linewidth(2)
+			self.line_profile_end_artist.set_linewidth(1.2)
 
 		if self.line_profile_artist is not None:
-			self.line_profile_artist.set_linewidth(2)
+			self.line_profile_artist.set_linewidth(1.2)
 
 		self.line_profile_dragging_endpoint = None
 
@@ -2536,6 +2608,24 @@ class SimulatorWidget(QWidget):
 					y2 + capHalfLength * normalY
 				]
 			)
+
+		if self.line_profile_label_artist is not None:
+			midX = (x1 + x2) / 2
+			midY = (y1 + y2) / 2
+
+			labelOffset = 0.025 * self.L
+
+			labelX = midX + labelOffset * normalX
+			labelY = midY + labelOffset * normalY
+
+			# keep the label inside the image
+			labelMargin = 0.025 * self.L
+			halfL = self.L / 2
+
+			labelX = np.clip(labelX, -halfL + labelMargin, halfL - labelMargin)
+			labelY = np.clip(labelY, -halfL + labelMargin, halfL - labelMargin)
+
+			self.line_profile_label_artist.set_position((labelX, labelY))
 
 	def updateLineProfileControls(self):
 		if self.line_profile_start is None:
@@ -2640,7 +2730,8 @@ class SimulatorWidget(QWidget):
 			"source": self.line_profile_source,
 			"line_artist": self.line_profile_artist,
 			"start_artist": self.line_profile_start_artist,
-			"end_artist": self.line_profile_end_artist
+			"end_artist": self.line_profile_end_artist,
+			"label_artist": self.line_profile_label_artist
 		}
 
 		if self.active_line_profile_index is None:
@@ -3091,7 +3182,8 @@ class SimulatorWidget(QWidget):
 		for artistName in (
 			"line_artist",
 			"start_artist",
-			"end_artist"
+			"end_artist",
+			"label_artist"
 		):
 			artist = profile.get(artistName)
 
@@ -3107,6 +3199,11 @@ class SimulatorWidget(QWidget):
 		# renumber the remaining profiles
 		for number, remainingProfile in enumerate(self.line_profiles, start=1):
 			remainingProfile["number"] = number
+
+			labelArtist = remainingProfile.get("label_artist")
+
+			if labelArtist is not None:
+				labelArtist.set_text(str(number))
 
 		self.line_profile_next_number = len(self.line_profiles) + 1
 
@@ -3153,7 +3250,8 @@ class SimulatorWidget(QWidget):
 			for artistName in (
 				"line_artist",
 				"start_artist",
-				"end_artist"
+				"end_artist",
+				"label_artist"
 			):
 				artist = profile.get(artistName)
 
