@@ -43,6 +43,8 @@ from numpy import pi as pi
 from matplotlib.gridspec import GridSpec
 import matplotlib.pyplot as plt
 import matplotlib.image as mplimg
+import matplotlib.patheffects as path_effects
+from matplotlib.colors import hsv_to_rgb
 
 from matplotlib.widgets import EllipseSelector
 from matplotlib.patches import Ellipse
@@ -175,6 +177,8 @@ class SimulatorWidget(QWidget):
 		self.line_profile_values = None
 		self.line_profile_source = None
 		self.line_profile_width_pixels = 1
+
+		self.line_profile_color = None
 
 		self.line_profile_dialog = None
 
@@ -1712,6 +1716,7 @@ class SimulatorWidget(QWidget):
 		self.line_profile_distance = None
 		self.line_profile_values = None
 		self.line_profile_source = None
+		self.line_profile_color = None
 
 		self.line_profile_artist = None
 		self.line_profile_start_artist = None
@@ -1915,14 +1920,140 @@ class SimulatorWidget(QWidget):
 			self.line_profile_end
 		)
 
-	def createLineProfileArtists(self, startPoint, endPoint):
+	def generateLineProfileColor(self):
+		# sample the active real-space colormap
+		try:
+			cmap = plt.get_cmap(self.colormap_RS)
+		except Exception:
+			cmap = plt.get_cmap("viridis")
+
+		cmapSamples = np.asarray(cmap(np.linspace(0.05, 0.95, 13)))[:, :3]
+
+		# collect colors already assigned to profiles
+		existingColors = []
+
+		for profile in self.line_profiles:
+			color = profile.get("color")
+
+			if color is not None:
+				existingColors.append(np.asarray(color, dtype=float))
+
+		# golden-angle hue spacing gives a psuedo-random distribution of colors that is visually distinct
+		goldenFraction = 0.618033988749895
+
+		bestColor = None
+		bestScore = -np.inf
+
+		for index in range(48):
+			hue = (0.07 + index * goldenFraction) % 1.0
+
+			candidate = np.asarray(hsv_to_rgb([hue, 0.88, 0.96]), dtype=float)
+
+			# prefer colors unlike the active colormap
+			cmapDistances = np.linalg.norm(cmapSamples - candidate, axis=1)
+
+			cmapScore = np.percentile(cmapDistances, 25)
+
+			# also strongly prefer colors unlike existing profiles
+			if len(existingColors) > 0:
+				existingArray = np.asarray(existingColors)
+
+				existingScore = np.min(np.linalg.norm(existingArray - candidate, axis=1))
+
+			else:
+				existingScore = 1.0
+
+			score = cmapScore + 1.35 * existingScore
+
+			if score > bestScore:
+				bestScore = score
+				bestColor = candidate
+
+		if bestColor is None:
+			bestColor = np.asarray([0.0, 1.0, 1.0])
+
+		return tuple(float(value) for value in bestColor)
+
+	def getLineProfileOutlineColor(self, startPoint, endPoint):
+		try:
+			Z_display = np.asarray(self.getFFTFilteredImage(), dtype=float)
+
+			if Z_display.ndim != 2:
+				return "white"
+
+			ny, nx = Z_display.shape
+
+			x1, y1 = startPoint
+			x2, y2 = endPoint
+
+			# sample points along the line
+			xPhysical = np.linspace(x1, x2, 64)
+			yPhysical = np.linspace(y1, y2, 64)
+
+			xPixels = (xPhysical + self.L / 2) / self.L * (nx - 1)
+			yPixels = (yPhysical + self.L / 2) / self.L * (ny - 1)
+
+			sampledValues = map_coordinates(Z_display, [yPixels, xPixels], order=1, mode="nearest")
+
+			# use the same normalization as the actual displayed image
+			if hasattr(self, "real_space_plot") and self.real_space_plot is not None:
+				normalizedValues = self.real_space_plot.norm(sampledValues)
+
+			else:
+				zMin = np.nanmin(Z_display)
+				zMax = np.nanmax(Z_display)
+
+				if zMax > zMin:
+					normalizedValues = (sampledValues - zMin) / (zMax - zMin)
+
+				else:
+					normalizedValues = np.full(sampledValues.shape, 0.5)
+
+			normalizedValues = np.asarray(normalizedValues, dtype=float)
+
+			normalizedVales = np.nan_to_num(normalizedValues, nan=0.5, posinf=1.0, neginf=0.0)
+
+			cmap = plt.get_cmap(self.colormap_RS)
+
+			rgb = np.asarray(cmap(np.clip(normalizedValues, 0.0, 1.0)))[:, :3]
+
+			# perceived luminance of the displayed background
+			luminance = (0.2126 * rgb[:, 0] + 0.7152 * rgb[:, 1] + 0.0722 * rgb[:, 2])
+
+			medianLuminance = np.median(luminance)
+
+			if medianLuminance >= 0.5:
+				return "black"
+
+			return "white"
+
+		except Exception:
+			return "white"
+
+	def updateActiveLineProfileConstrast(self):
+		if self.line_profile_start is None:
+			return
+
+		if self.line_profile_end is None:
+			return
+
+		outlineColor = self.getLineProfileOutlineColor(self.line_profile_start, self.line_profile_end)
+
+		for artist in (self.line_profile_artist, self.line_profile_start_artist, self.line_profile_end_artist):
+			if artist is None:
+				continue
+
+			artist.set_path_effects([path_effects.Stroke(linewidth=4, foreground=outlineColor), path_effects.Normal()])
+
+
+	def createLineProfileArtists(self, startPoint, endPoint, color):
 		x1, y1 = startPoint
 		x2, y2 = endPoint
 
 		lineArtist, = self.ax_real.plot(
 			[x1, x2],
 			[y1, y2],
-			color="cyan",
+			color=color,
 			linewidth=2,
 			picker=6
 		)
@@ -1931,7 +2062,11 @@ class SimulatorWidget(QWidget):
 		dy = y2 - y1
 		length = np.hypot(dx, dy)
 
+		outlineColor = self.getLineProfileOutlineColor(startPoint, endPoint)
+
 		if length == 0:
+			lineArtist.set_path_effects([path_effects.Stroke(linewidth=4, foreground=outlineColor), path_effects.Normal()])
+
 			return lineArtist, None, None
 
 		normalX = -dy / length
@@ -1962,7 +2097,7 @@ class SimulatorWidget(QWidget):
 		startArtist, = self.ax_real.plot(
 			startCapX,
 			startCapY,
-			color="cyan",
+			color=color,
 			linewidth=2,
 			picker=8
 		)
@@ -1970,10 +2105,13 @@ class SimulatorWidget(QWidget):
 		endArtist, = self.ax_real.plot(
 			endCapX,
 			endCapY,
-			color="cyan",
+			color=color,
 			linewidth=2,
 			picker=8
 		)
+
+		for artist in lineArtist, startArtist, endArtist:
+			artist.set_path_effects([path_effects.Stroke(linewidth=4, foreground=outlineColor), path_effects.Normal()])
 
 		return lineArtist, startArtist, endArtist
 
@@ -1986,11 +2124,14 @@ class SimulatorWidget(QWidget):
 
 		self.removeLineProfileArtists()
 
-		self.line_profile_artist, self.line_profile_start_artist, self.line_profile_end_artist = self.createLineProfileArtists(
-			self.line_profile_start,
-			self.line_profile_end
-		)
+		if self.line_profile_color is None:
+			self.line_profile_color = self.generateLineProfileColor()
 
+		self.line_profile_artist, self.line_profile_start_artist, self.line_profile_end_artist = self.createLineProfileArtists(
+			startPoint=self.line_profile_start,
+			endPoint=self.line_profile_end,
+			color=self.line_profile_color
+		)
 		self.ensureLineProfileEditConnections()
 
 	def redrawAllLineProfiles(self):
@@ -2003,12 +2144,20 @@ class SimulatorWidget(QWidget):
 			startPoint = profile["start"]
 			endPoint = profile["end"]
 
-			lineArtist, startArtist, endArtist = self.createLineProfileArtists(startPoint=startPoint, endPoint=endPoint)
+			profileColor = profile.get("color")
+
+			if profileColor is None:
+				profileColor = self.generateLineProfileColor()
+
+				profile["color"] = profileColor
+
+			lineArtist, startArtist, endArtist = self.createLineProfileArtists(startPoint=startPoint, endPoint=endPoint, color=profileColor)
 
 			profile["line_artist"] = lineArtist
 			profile["start_artist"] = startArtist
 			profile["end_artist"] = endArtist
 
+			self.line_profile_color = tuple(profile["color"])
 			self.line_profile_start = tuple(profile["start"])
 			self.line_profile_end = tuple(profile["end"])
 			self.line_profile_width_pixels = int(profile["width_pixels"])
@@ -2032,6 +2181,7 @@ class SimulatorWidget(QWidget):
 			self.line_profile_artist = profile.get("line_artist")
 			self.line_profile_start_artist = profile.get("start_artist")
 			self.line_profile_end_artist = profile.get("end_artist")
+			self.line_profile_color = tuple(profile["color"])
 
 			if hasattr(self, "line_profile_width_input"):
 				self.line_profile_width_input.blockSignals(True)
@@ -2142,6 +2292,15 @@ class SimulatorWidget(QWidget):
 		self.line_profile_end = tuple(profile["end"])
 
 		self.line_profile_width_pixels = int(profile["width_pixels"])
+
+		profileColor = profile.get("color")
+
+		if profileColor is None:
+			profileColor = self.generateLineProfileColor()
+
+			profile["color"] = profileColor
+
+		self.line_profile_color = tuple(profileColor)
 
 		self.line_profile_distance = profile.get("distance")
 
@@ -2318,6 +2477,9 @@ class SimulatorWidget(QWidget):
 		self.line_profile_drag_start_end = None
 
 		self.calculateLineProfile()
+
+		self.updateActiveLineProfileConstrast()
+
 		self.syncActiveLineProfile()
 		self.updateLineProfileControls()
 
@@ -2435,6 +2597,27 @@ class SimulatorWidget(QWidget):
 
 				item.setTextAlignment(Qt.AlignCenter)
 
+				# use the profile-number cell as a color swatch
+				if col == 0:
+					color = profile.get("color")
+
+					if color is not None:
+						qColor = QColor.fromRgbF(float(color[0]), float(color[1]), float(color[2]))
+
+						item.setBackground(qColor)
+
+						colorLuminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+
+						if colorLuminance >= 0.5:
+							item.setForeground(QColor("black"))
+
+						else:
+							item.setForeground(QColor("white"))
+
+						font = item.font()
+						font.setBold(True)
+						item.setFont(font)
+
 				self.line_profile_table.setItem(row, col, item)
 
 	def syncActiveLineProfile(self):
@@ -2444,10 +2627,14 @@ class SimulatorWidget(QWidget):
 		if self.line_profile_end is None:
 			return
 
+		if self.line_profile_color is None:
+			self.line_profile_color = self.generateLineProfileColor()
+
 		profile = {
 			"start": self.line_profile_start,
 			"end": self.line_profile_end,
 			"width_pixels": self.line_profile_width_pixels,
+			"color": tuple(self.line_profile_color),
 			"distance": self.line_profile_distance,
 			"values": self.line_profile_values,
 			"source": self.line_profile_source,
@@ -2934,6 +3121,7 @@ class SimulatorWidget(QWidget):
 		self.line_profile_distance = None
 		self.line_profile_values = None
 		self.line_profile_source = None
+		self.line_profile_color = None
 
 		self.line_profile_artist = None
 		self.line_profile_start_artist = None
@@ -3003,7 +3191,7 @@ class SimulatorWidget(QWidget):
 		self.line_profile_distance = None
 		self.line_profile_values = None
 		self.line_profile_source = None
-
+		self.line_profile_color = None
 		# disable Show profile because there is no line anymore
 		self.line_profile_show_btn.setEnabled(False)
 		self.line_profile_delete_btn.setEnabled(False)
