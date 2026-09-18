@@ -1550,10 +1550,14 @@ class SimulatorWidget(QWidget):
 	def initLineProfileWidget(self):
 		groupBox = QGroupBox("Line profile")
 
-		mainLayout = QHBoxLayout()
+		mainLayout = QVBoxLayout()
 		mainLayout.setContentsMargins(8, 8, 8, 8)
-		mainLayout.setSpacing(20)
+		mainLayout.setSpacing(8)
 		mainLayout.setAlignment(Qt.AlignTop)
+
+		controlsLayout = QHBoxLayout()
+		controlsLayout.setSpacing(20)
+		controlsLayout.setAlignment(Qt.AlignTop)
 
 		# left side: description and line selection controls
 		selectionWidget = QWidget()
@@ -1568,6 +1572,8 @@ class SimulatorWidget(QWidget):
 		)
 		description.setWordWrap(True)
 		description.setMaximumWidth(420)
+
+		description.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
 
 		self.line_profile_select_btn = QPushButton(
 			"Select line",
@@ -1603,6 +1609,8 @@ class SimulatorWidget(QWidget):
 		)
 		hintLabel.setWordWrap(True)
 		hintLabel.setMaximumWidth(420)
+
+		hintLabel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
 
 		selectionLayout.addWidget(description)
 		selectionLayout.addLayout(selectionButtons)
@@ -1651,6 +1659,42 @@ class SimulatorWidget(QWidget):
 		# assemble the two sections
 		mainLayout.addWidget(selectionWidget, 3)
 		mainLayout.addWidget(outputWidget, 2)
+
+		mainLayout.addLayout(controlsLayout)
+
+		self.line_profile_table = QTableWidget(self)
+
+		self.line_profile_table.setColumnCount(6)
+
+		self.line_profile_table.setHorizontalHeaderLabels(
+			[
+			"n",
+			"x₁",
+			"y₁",
+			"x₂",
+			"y₂",
+			"Width"
+			]
+		)
+
+		self.line_profile_table.setRowCount(0)
+
+		self.line_profile_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+		self.line_profile_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+		self.line_profile_table.setSelectionMode(QAbstractItemView.SingleSelection)
+
+		self.line_profile_table.verticalHeader().setVisible(False)
+
+		self.line_profile_table.setMinimumHeight(110)
+		self.line_profile_table.setMaximumHeight(130)
+
+		self.line_profile_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+		self.line_profile_table.cellClicked.connect(self.onLineProfileTableClicked)
+
+		mainLayout.addWidget(self.line_profile_table)
 
 		groupBox.setLayout(mainLayout)
 
@@ -1871,19 +1915,11 @@ class SimulatorWidget(QWidget):
 			self.line_profile_end
 		)
 
-	def drawStoredLineProfileSelection(self):
-		if self.line_profile_start is None:
-			return
+	def createLineProfileArtists(self, startPoint, endPoint):
+		x1, y1 = startPoint
+		x2, y2 = endPoint
 
-		if self.line_profile_end is None:
-			return
-
-		self.removeLineProfileArtists()
-
-		x1, y1 = self.line_profile_start
-		x2, y2 = self.line_profile_end
-
-		self.line_profile_artist, = self.ax_real.plot(
+		lineArtist, = self.ax_real.plot(
 			[x1, x2],
 			[y1, y2],
 			color="cyan",
@@ -1896,9 +1932,8 @@ class SimulatorWidget(QWidget):
 		length = np.hypot(dx, dy)
 
 		if length == 0:
-			return
+			return lineArtist, None, None
 
-		# unit vec perp to profile line
 		normalX = -dy / length
 		normalY = dx / length
 
@@ -1924,7 +1959,7 @@ class SimulatorWidget(QWidget):
 			y2 + capHalfLength * normalY
 		]
 
-		self.line_profile_start_artist, = self.ax_real.plot(
+		startArtist, = self.ax_real.plot(
 			startCapX,
 			startCapY,
 			color="cyan",
@@ -1932,15 +1967,84 @@ class SimulatorWidget(QWidget):
 			picker=8
 		)
 
-		self.line_profile_end_artist, = self.ax_real.plot(
-				endCapX,
-				endCapY,
-				color="cyan",
-				linewidth=2,
-				picker=8
+		endArtist, = self.ax_real.plot(
+			endCapX,
+			endCapY,
+			color="cyan",
+			linewidth=2,
+			picker=8
+		)
+
+		return lineArtist, startArtist, endArtist
+
+	def drawStoredLineProfileSelection(self):
+		if self.line_profile_start is None:
+			return
+
+		if self.line_profile_end is None:
+			return
+
+		self.removeLineProfileArtists()
+
+		self.line_profile_artist, self.line_profile_start_artist, self.line_profile_end_artist = self.createLineProfileArtists(
+			self.line_profile_start,
+			self.line_profile_end
 		)
 
 		self.ensureLineProfileEditConnections()
+
+	def redrawAllLineProfiles(self):
+		if len(self.line_profiles) == 0:
+			return
+
+		activeIndex = self.active_line_profile_index
+
+		for profile in self.line_profiles:
+			startPoint = profile["start"]
+			endPoint = profile["end"]
+
+			lineArtist, startArtist, endArtist = self.createLineProfileArtists(startPoint=startPoint, endPoint=endPoint)
+
+			profile["line_artist"] = lineArtist
+			profile["start_artist"] = startArtist
+			profile["end_artist"] = endArtist
+
+			self.line_profile_start = tuple(profile["start"])
+			self.line_profile_end = tuple(profile["end"])
+			self.line_profile_width_pixels = int(profile["width_pixels"])
+
+			self.calculateLineProfile()
+
+			profile["distance"] = self.line_profile_distance
+			profile["values"] = self.line_profile_values
+			profile["source"] = self.line_profile_source
+
+		# restore whichever profile was active before the redraw
+		if activeIndex is not None and 0 <= activeIndex < len(self.line_profiles):
+			profile = self.line_profiles[activeIndex]
+			self.active_line_profile_index = activeIndex
+			self.line_profile_start = tuple(profile["start"])
+			self.line_profile_end = tuple(profile["end"])
+			self.line_profile_width_pixels = int(profile["width_pixels"])
+			self.line_profile_distance = profile.get("distance")
+			self.line_profile_values = profile.get("values")
+			self.line_profile_source = profile.get("source")
+			self.line_profile_artist = profile.get("line_artist")
+			self.line_profile_start_artist = profile.get("start_artist")
+			self.line_profile_end_artist = profile.get("end_artist")
+
+			if hasattr(self, "line_profile_width_input"):
+				self.line_profile_width_input.blockSignals(True)
+				self.line_profile_width_input.setValue(self.line_profile_width_pixels)
+				self.line_profile_width_input.blockSignals(False)
+
+			self.updateLineProfileControls()
+
+			if hasattr(self, "line_profile_table"):
+				self.line_profile_table.selectRow(activeIndex)
+
+		self.ensureLineProfileEditConnections()
+		self.refreshLineProfileTable()
 
 	def removeLineProfileArtists(self):
 		for artistName in (
@@ -2061,6 +2165,9 @@ class SimulatorWidget(QWidget):
 		self.line_profile_delete_btn.setEnabled(True)
 
 		self.updateLineProfileControls()
+
+		if hasattr(self, "line_profile_table"):
+			self.line_profile_table.selectRow(index)
 
 	def onLineProfileEditPress(self, event):
 		if self.line_profile_selecting:
@@ -2293,6 +2400,43 @@ class SimulatorWidget(QWidget):
 			f"Width: {self.line_profile_width_pixels} px"
 		)
 
+	def onLineProfileTableClicked(self, row, column):
+		if row < 0:
+			return
+
+		if row >= len(self.line_profiles):
+			return
+
+		self.activateLineProfile(row)
+
+		self.canvas.draw_idle()
+
+	def refreshLineProfileTable(self):
+		if not hasattr(self, "line_profile_table"):
+			return
+
+		self.line_profile_table.setRowCount(len(self.line_profiles))
+
+		for row, profile in enumerate(self.line_profiles):
+			x1, y1 = profile["start"]
+			x2, y2 = profile["end"]
+
+			values = (
+				str(profile["number"]),
+				f"{x1:.3f}",
+				f"{y1:.3f}",
+				f"{x2:.3f}",
+				f"{y2:.3f}",
+				str(profile["width_pixels"])
+			)
+
+			for col, value in enumerate(values):
+				item = QTableWidgetItem(value)
+
+				item.setTextAlignment(Qt.AlignCenter)
+
+				self.line_profile_table.setItem(row, col, item)
+
 	def syncActiveLineProfile(self):
 		if self.line_profile_start is None:
 			return
@@ -2325,6 +2469,11 @@ class SimulatorWidget(QWidget):
 			profile["number"] = self.line_profiles[self.active_line_profile_index]["number"]
 
 			self.line_profiles[self.active_line_profile_index] = profile
+
+		self.refreshLineProfileTable()
+
+		if self.active_line_profile_index is not None and hasattr(self, "line_profile_table"):
+			self.line_profile_table.selectRow(self.active_line_profile_index)
 
 	def setLineProfileGeometry(self, startPoint, endPoint):
 		x1, y1 = startPoint
@@ -2774,6 +2923,8 @@ class SimulatorWidget(QWidget):
 
 		self.line_profile_next_number = len(self.line_profiles) + 1
 
+		self.refreshLineProfileTable()
+
 		# nothing remains
 		self.active_line_profile_index = None
 
@@ -2845,6 +2996,8 @@ class SimulatorWidget(QWidget):
 		self.line_profiles = []
 		self.active_line_profile_index = None
 		self.line_profile_next_number = 1
+
+		self.refreshLineProfileTable()
 
 		# clear stored profile data
 		self.line_profile_distance = None
@@ -5444,19 +5597,8 @@ class SimulatorWidget(QWidget):
 			self.createFFTSelector()
 
 		# redraw and recalculate a stored line profile after rebuilding the axes
-		if (
-			self.line_profile_start is not None
-			and self.line_profile_end is not None
-		):
-			self.drawStoredLineProfileSelection()
-			self.calculateLineProfile()
-			self.syncActiveLineProfile()
-
-			if hasattr(
-				self,
-				"line_profile_length_input"
-			):
-				self.updateLineProfileControls()
+		if len(self.line_profiles) > 0:
+			self.redrawAllLineProfiles()
 
 		self.canvas.draw()
 
