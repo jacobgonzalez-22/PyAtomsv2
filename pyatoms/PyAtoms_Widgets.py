@@ -3014,7 +3014,7 @@ class SimulatorWidget(QWidget):
 		):
 			return
 
-		# Close the old profile window if one is already open.
+		# close the old profile window if one is already open
 		if self.line_profile_dialog is not None:
 			try:
 				self.line_profile_dialog.close()
@@ -3023,7 +3023,7 @@ class SimulatorWidget(QWidget):
 
 		dialog = QDialog(self)
 		dialog.setWindowTitle("PyAtoms line profiles")
-		dialog.resize(700, 500)
+		dialog.resize(700, 550)
 
 		layout = QVBoxLayout(dialog)
 
@@ -3040,9 +3040,9 @@ class SimulatorWidget(QWidget):
 
 		axis = figure.add_subplot(111)
 
-		# Plot every stored profile using the same color
-		# as its line on the real-space image.
-		numberPlotted = 0
+		# keep track of the plotted Matplotlib lines and their visibility checkboxes
+		profilePlotLines = []
+		profileCheckboxes = []
 
 		for profile in self.line_profiles:
 			distance = profile.get("distance")
@@ -3053,7 +3053,7 @@ class SimulatorWidget(QWidget):
 
 			color = profile.get("color")
 
-			axis.plot(
+			plotLine, = axis.plot(
 				distance,
 				values,
 				color=color,
@@ -3061,9 +3061,9 @@ class SimulatorWidget(QWidget):
 				label=f"Profile {profile['number']}"
 			)
 
-			numberPlotted += 1
+			profilePlotLines.append(plotLine)
 
-		if numberPlotted == 0:
+		if len(profilePlotLines) == 0:
 			return
 
 		axis.set_xlabel(
@@ -3078,11 +3078,138 @@ class SimulatorWidget(QWidget):
 			"Line profiles"
 		)
 
-		axis.legend()
+		def updateProfileLegend():
+			visibleLines = [
+				line
+				for line in profilePlotLines
+				if line.get_visible()
+			]
+
+			existingLegend = axis.get_legend()
+
+			if existingLegend is not None:
+				existingLegend.remove()
+
+			if len(visibleLines) > 0:
+				axis.legend(
+					handles=visibleLines,
+					labels=[
+						line.get_label()
+						for line in visibleLines
+					]
+				)
+
+		def setProfileVisibility(plotLine, checked):
+			plotLine.set_visible(bool(checked))
+
+			updateProfileLegend()
+
+			canvas.draw_idle()
+
+		updateProfileLegend()
 
 		figure.tight_layout()
 
-		# Show detailed information for the currently selected profile.
+		# profile visibility controls
+		profileControlsBox = QGroupBox(
+			"Profiles shown",
+			dialog
+		)
+
+		profileControlsLayout = QVBoxLayout(
+			profileControlsBox
+		)
+
+		checkboxLayout = QGridLayout()
+
+		for index, plotLine in enumerate(profilePlotLines):
+			checkbox = QCheckBox(
+				plotLine.get_label(),
+				profileControlsBox
+			)
+
+			checkbox.setChecked(True)
+
+			checkbox.toggled.connect(
+				lambda checked, line=plotLine:
+				setProfileVisibility(line, checked)
+			)
+
+			row = index // 4
+			column = index % 4
+
+			checkboxLayout.addWidget(
+				checkbox,
+				row,
+				column
+			)
+
+			profileCheckboxes.append(
+				checkbox
+			)
+
+		profileControlsLayout.addLayout(
+			checkboxLayout
+		)
+
+		showAllButton = QPushButton(
+			"Show all",
+			profileControlsBox
+		)
+
+		hideAllButton = QPushButton(
+			"Hide all",
+			profileControlsBox
+		)
+
+		def setAllProfileVisibility(visible):
+			for checkbox, plotLine in zip(
+				profileCheckboxes,
+				profilePlotLines
+			):
+				checkbox.blockSignals(True)
+
+				checkbox.setChecked(
+					visible
+				)
+
+				checkbox.blockSignals(False)
+
+				plotLine.set_visible(
+					visible
+				)
+
+			updateProfileLegend()
+
+			canvas.draw_idle()
+
+		showAllButton.clicked.connect(
+			lambda:
+			setAllProfileVisibility(True)
+		)
+
+		hideAllButton.clicked.connect(
+			lambda:
+			setAllProfileVisibility(False)
+		)
+
+		visibilityButtonLayout = QHBoxLayout()
+
+		visibilityButtonLayout.addWidget(
+			showAllButton
+		)
+
+		visibilityButtonLayout.addWidget(
+			hideAllButton
+		)
+
+		visibilityButtonLayout.addStretch(1)
+
+		profileControlsLayout.addLayout(
+			visibilityButtonLayout
+		)
+
+		# selected profile information
 		activeProfile = self.line_profiles[
 			self.active_line_profile_index
 		]
@@ -3131,14 +3258,36 @@ class SimulatorWidget(QWidget):
 		)
 
 		buttonLayout = QHBoxLayout()
-		buttonLayout.addWidget(saveButton)
-		buttonLayout.addStretch(1)
-		buttonLayout.addWidget(closeButton)
 
-		layout.addWidget(toolbar)
-		layout.addWidget(canvas)
-		layout.addWidget(infoLabel)
-		layout.addLayout(buttonLayout)
+		buttonLayout.addWidget(
+			saveButton
+		)
+
+		buttonLayout.addStretch(1)
+
+		buttonLayout.addWidget(
+			closeButton
+		)
+
+		layout.addWidget(
+			toolbar
+		)
+
+		layout.addWidget(
+			canvas
+		)
+
+		layout.addWidget(
+			profileControlsBox
+		)
+
+		layout.addWidget(
+			infoLabel
+		)
+
+		layout.addLayout(
+			buttonLayout
+		)
 
 		canvas.draw()
 
