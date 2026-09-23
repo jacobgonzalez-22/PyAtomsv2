@@ -3002,12 +3002,19 @@ class SimulatorWidget(QWidget):
 		self.line_profile_source = self.fft_filter_display
 
 	def showLineProfile(self):
-		if self.line_profile_distance is None:
+		if len(self.line_profiles) == 0:
 			return
 
-		if self.line_profile_values is None:
+		if self.active_line_profile_index is None:
 			return
 
+		if (
+			self.active_line_profile_index < 0
+			or self.active_line_profile_index >= len(self.line_profiles)
+		):
+			return
+
+		# Close the old profile window if one is already open.
 		if self.line_profile_dialog is not None:
 			try:
 				self.line_profile_dialog.close()
@@ -3015,7 +3022,7 @@ class SimulatorWidget(QWidget):
 				pass
 
 		dialog = QDialog(self)
-		dialog.setWindowTitle("PyAtoms line profile")
+		dialog.setWindowTitle("PyAtoms line profiles")
 		dialog.resize(700, 500)
 
 		layout = QVBoxLayout(dialog)
@@ -3033,10 +3040,31 @@ class SimulatorWidget(QWidget):
 
 		axis = figure.add_subplot(111)
 
-		axis.plot(
-			self.line_profile_distance,
-			self.line_profile_values
-		)
+		# Plot every stored profile using the same color
+		# as its line on the real-space image.
+		numberPlotted = 0
+
+		for profile in self.line_profiles:
+			distance = profile.get("distance")
+			values = profile.get("values")
+
+			if distance is None or values is None:
+				continue
+
+			color = profile.get("color")
+
+			axis.plot(
+				distance,
+				values,
+				color=color,
+				linewidth=1.5,
+				label=f"Profile {profile['number']}"
+			)
+
+			numberPlotted += 1
+
+		if numberPlotted == 0:
+			return
 
 		axis.set_xlabel(
 			"Distance along line (nm)"
@@ -3047,13 +3075,20 @@ class SimulatorWidget(QWidget):
 		)
 
 		axis.set_title(
-			"Line profile"
+			"Line profiles"
 		)
+
+		axis.legend()
 
 		figure.tight_layout()
 
-		x1, y1 = self.line_profile_start
-		x2, y2 = self.line_profile_end
+		# Show detailed information for the currently selected profile.
+		activeProfile = self.line_profiles[
+			self.active_line_profile_index
+		]
+
+		x1, y1 = activeProfile["start"]
+		x2, y2 = activeProfile["end"]
 
 		length = np.hypot(
 			x2 - x1,
@@ -3061,22 +3096,24 @@ class SimulatorWidget(QWidget):
 		)
 
 		infoLabel = QLabel(
+			"Selected profile %d    "
 			"Start: (%.3f, %.3f) nm    "
 			"End: (%.3f, %.3f) nm    "
-			"Length: %.3f nm	"
+			"Length: %.3f nm    "
 			"Width: %d px"
 			% (
+				activeProfile["number"],
 				x1,
 				y1,
 				x2,
 				y2,
 				length,
-				self.line_profile_width_pixels
+				activeProfile["width_pixels"]
 			)
 		)
 
 		saveButton = QPushButton(
-			"Save profile",
+			"Save selected profile",
 			dialog
 		)
 
