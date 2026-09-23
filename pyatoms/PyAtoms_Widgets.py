@@ -186,6 +186,17 @@ class SimulatorWidget(QWidget):
 
 		self.line_profile_dialog = None
 
+		self.line_profile_plot_axis = None
+		self.line_profile_plot_canvas = None
+		self.line_profile_plot_lines = {}
+		self.line_profile_plot_visibility = {}
+
+		self.line_profile_plot_checkboxes = {}
+		self.line_profile_plot_checkbox_layout = None
+		self.line_profile_plot_controls_box = None
+		self.line_profile_plot_temp_line = None
+		self.line_profile_plot_info_label = None
+
 		self.line_profile_start_artist = None
 		self.line_profile_end_artist = None
 		self.line_profile_dragging_endpoint = None
@@ -1761,6 +1772,24 @@ class SimulatorWidget(QWidget):
 		if self.line_profile_selecting:
 			self.stopLineProfileSelection()
 
+			# remove the temporary graph curve if a new profile was cancelled
+			if self.line_profile_plot_temp_line is not None:
+				try:
+					self.line_profile_plot_temp_line.remove()
+				except Exception:
+					pass
+
+				self.line_profile_plot_temp_line = None
+
+				self.updateOpenLineProfileLegend()
+
+				if self.line_profile_plot_axis is not None:
+					self.line_profile_plot_axis.relim()
+					self.line_profile_plot_axis.autoscale_view()
+
+				if self.line_profile_plot_canvas is not None:
+					self.line_profile_plot_canvas.draw_idle()
+
 			self.line_profile_status_label.setText("Selection cancelled.")
 
 			return
@@ -1851,6 +1880,9 @@ class SimulatorWidget(QWidget):
 			float(event.ydata)
 		)
 
+		if self.line_profile_color is None:
+			self.line_profile_color = self.generateLineProfileColor()
+
 		if self.line_profile_preview is not None:
 			try:
 				self.line_profile_preview.remove()
@@ -1862,9 +1894,28 @@ class SimulatorWidget(QWidget):
 		self.line_profile_preview, = self.ax_real.plot(
 			[x, x],
 			[y, y],
-			color="cyan",
-			linewidth=2
+			color=self.line_profile_color,
+			linewidth=1.2
 		)
+
+		# if the profile graph is already open then draw a temporary curve
+		if (
+			self.line_profile_dialog is not None
+			and self.line_profile_dialog.isVisible()
+			and self.line_profile_plot_axis is not None
+		):
+			profileNumber = self.line_profile_next_number
+
+			self.line_profile_plot_temp_line, = self.line_profile_plot_axis.plot(
+				[],
+				[],
+				color=self.line_profile_color,
+				linewidth=1.5,
+				label=f"Profile {profileNumber}"
+			)
+
+			self.updateOpenLineProfileLegend()
+			self.line_profile_plot_canvas.draw_idle()
 
 		self.canvas.draw_idle()
 
@@ -1893,6 +1944,24 @@ class SimulatorWidget(QWidget):
 			[x1, x2],
 			[y1, y2]
 		)
+		# temp use the drag endpoint to calculate the profile live
+		self.line_profile_end = (x2, y2)
+
+		self.calculateLineProfile()
+
+		if (
+			self.line_profile_plot_temp_line is not None
+			and self.line_profile_distance is not None
+			and self.line_profile_values is not None
+		):
+			self.line_profile_plot_temp_line.set_data(
+				self.line_profile_distance,
+				self.line_profile_values
+			)
+
+			self.line_profile_plot_axis.relim()
+			self.line_profile_plot_axis.autoscale_view()
+			self.line_profile_plot_canvas.draw_idle()
 
 		self.canvas.draw_idle()
 
@@ -2400,6 +2469,8 @@ class SimulatorWidget(QWidget):
 		if hasattr(self, "line_profile_table"):
 			self.line_profile_table.selectRow(index)
 
+		self.updateOpenLineProfileInfo()
+
 	def onLineProfileEditPress(self, event):
 		if self.line_profile_selecting:
 			return
@@ -2526,6 +2597,10 @@ class SimulatorWidget(QWidget):
 
 		self.updateLineProfileArtists()
 		self.updateLineProfileControls()
+
+		self.calculateLineProfile()
+		self.updateOpenLineProfilePlot()
+		self.updateOpenLineProfileInfo()
 
 		self.canvas.draw_idle()
 
@@ -2801,25 +2876,24 @@ class SimulatorWidget(QWidget):
 		self.updateLineProfileControls()
 		self.line_profile_show_btn.setEnabled(True)
 		self.line_profile_delete_btn.setEnabled(True)
+
+		if self.active_line_profile_index is not None:
+			profile = self.line_profiles[self.active_line_profile_index]
+			self.addProfileToOpenLineProfilePlot(profile)
+
+		self.updateOpenLineProfileInfo()
+
 		self.canvas.draw_idle()
 
 	def applyLineProfileEndpoints(self):
 		try:
-			x1 = float(
-				self.line_profile_x1_input.text()
-			)
+			x1 = float(self.line_profile_x1_input.text())
 
-			y1 = float(
-				self.line_profile_y1_input.text()
-			)
+			y1 = float(self.line_profile_y1_input.text())
 
-			x2 = float(
-				self.line_profile_x2_input.text()
-			)
+			x2 = float(self.line_profile_x2_input.text())
 
-			y2 = float(
-				self.line_profile_y2_input.text()
-			)
+			y2 = float(self.line_profile_y2_input.text())
 
 		except ValueError:
 			self.line_profile_status_label.setText(
@@ -2834,21 +2908,13 @@ class SimulatorWidget(QWidget):
 
 	def applyLineProfileLengthAngle(self):
 		try:
-			x1 = float(
-				self.line_profile_x1_input.text()
-			)
+			x1 = float(self.line_profile_x1_input.text())
 
-			y1 = float(
-				self.line_profile_y1_input.text()
-			)
+			y1 = float(self.line_profile_y1_input.text())
 
-			length = float(
-				self.line_profile_length_input.text()
-			)
+			length = float(self.line_profile_length_input.text())
 
-			angleDegrees = float(
-				self.line_profile_angle_input.text()
-			)
+			angleDegrees = float(self.line_profile_angle_input.text())
 
 		except ValueError:
 			self.line_profile_status_label.setText(
@@ -2862,19 +2928,11 @@ class SimulatorWidget(QWidget):
 			)
 			return
 
-		angleRadians = np.radians(
-			angleDegrees
-		)
+		angleRadians = np.radians(angleDegrees)
 
-		x2 = (
-			x1
-			+ length * np.cos(angleRadians)
-		)
+		x2 = (x1 + length * np.cos(angleRadians))
 
-		y2 = (
-			y1
-			+ length * np.sin(angleRadians)
-		)
+		y2 = (y1 + length * np.sin(angleRadians))
 
 		self.setLineProfileGeometry(
 			(x1, y1),
@@ -2884,13 +2942,12 @@ class SimulatorWidget(QWidget):
 	def updateLineProfileWidth(self, width):
 		self.line_profile_width_pixels = int(width)
 
-		if (
-			self.line_profile_start is not None
-			and self.line_profile_end is not None
-		):
+		if self.line_profile_start is not None and self.line_profile_end is not None:
 			self.calculateLineProfile()
 			self.syncActiveLineProfile()
 			self.updateLineProfileControls()
+			self.updateOpenLineProfilePlot()
+			self.updateOpenLineProfileInfo()
 
 	def calculateLineProfile(self):
 		if self.line_profile_start is None:
@@ -2899,9 +2956,7 @@ class SimulatorWidget(QWidget):
 		if self.line_profile_end is None:
 			return
 
-		Z_display = np.asarray(
-			self.getFFTFilteredImage()
-		)
+		Z_display = np.asarray(self.getFFTFilteredImage())
 
 		if Z_display.ndim != 2:
 			return
@@ -3008,219 +3063,72 @@ class SimulatorWidget(QWidget):
 		if self.active_line_profile_index is None:
 			return
 
-		if (
-			self.active_line_profile_index < 0
-			or self.active_line_profile_index >= len(self.line_profiles)
-		):
+		if self.active_line_profile_index < 0 or self.active_line_profile_index >= len(self.line_profiles):
 			return
 
-		# close the old profile window if one is already open
-		if self.line_profile_dialog is not None:
-			try:
-				self.line_profile_dialog.close()
-			except Exception:
-				pass
+		# if the window is already open then keep using it
+		if self.line_profile_dialog is not None and self.line_profile_dialog.isVisible():
+			self.line_profile_dialog.raise_()
+			self.line_profile_dialog.activateWindow()
+			return
 
 		dialog = QDialog(self)
+		self.line_profile_dialog = dialog
+
 		dialog.setWindowTitle("PyAtoms line profiles")
 		dialog.resize(700, 550)
 
 		layout = QVBoxLayout(dialog)
 
-		figure = plt.Figure(
-			figsize=(7, 4)
-		)
-
+		figure = plt.Figure(figsize=(7, 4))
 		canvas = FigureCanvas(figure)
-
-		toolbar = NavigationToolbar(
-			canvas,
-			dialog
-		)
-
+		toolbar = NavigationToolbar(canvas, dialog)
 		axis = figure.add_subplot(111)
 
-		# keep track of the plotted Matplotlib lines and their visibility checkboxes
-		profilePlotLines = []
-		profileCheckboxes = []
+		axis.set_xlabel("Distance along line (nm)")
+		axis.set_ylabel("Simulated topographic signal (arb. units)")
+		axis.set_title("Line profiles")
 
-		for profile in self.line_profiles:
-			distance = profile.get("distance")
-			values = profile.get("values")
-
-			if distance is None or values is None:
-				continue
-
-			color = profile.get("color")
-
-			plotLine, = axis.plot(
-				distance,
-				values,
-				color=color,
-				linewidth=1.5,
-				label=f"Profile {profile['number']}"
-			)
-
-			profilePlotLines.append(plotLine)
-
-		if len(profilePlotLines) == 0:
-			return
-
-		axis.set_xlabel(
-			"Distance along line (nm)"
-		)
-
-		axis.set_ylabel(
-			"Simulated topographic signal (arb. units)"
-		)
-
-		axis.set_title(
-			"Line profiles"
-		)
-
-		def updateProfileLegend():
-			visibleLines = [
-				line
-				for line in profilePlotLines
-				if line.get_visible()
-			]
-
-			existingLegend = axis.get_legend()
-
-			if existingLegend is not None:
-				existingLegend.remove()
-
-			if len(visibleLines) > 0:
-				axis.legend(
-					handles=visibleLines,
-					labels=[
-						line.get_label()
-						for line in visibleLines
-					]
-				)
-
-		def setProfileVisibility(plotLine, checked):
-			plotLine.set_visible(bool(checked))
-
-			updateProfileLegend()
-
-			canvas.draw_idle()
-
-		updateProfileLegend()
-
-		figure.tight_layout()
+		self.line_profile_plot_axis = axis
+		self.line_profile_plot_canvas = canvas
+		self.line_profile_plot_lines = {}
+		self.line_profile_plot_checkboxes = {}
+		self.line_profile_plot_temp_line = None
 
 		# profile visibility controls
-		profileControlsBox = QGroupBox(
-			"Profiles shown",
-			dialog
-		)
-
-		profileControlsLayout = QVBoxLayout(
-			profileControlsBox
-		)
+		profileControlsBox = QGroupBox("Profiles shown", dialog)
+		profileControlsLayout = QVBoxLayout(profileControlsBox)
 
 		checkboxLayout = QGridLayout()
 
-		for index, plotLine in enumerate(profilePlotLines):
-			checkbox = QCheckBox(
-				plotLine.get_label(),
-				profileControlsBox
-			)
+		self.line_profile_plot_controls_box = profileControlsBox
+		self.line_profile_plot_checkbox_layout = checkboxLayout
 
-			checkbox.setChecked(True)
+		profileControlsLayout.addLayout(checkboxLayout)
 
-			checkbox.toggled.connect(
-				lambda checked, line=plotLine:
-				setProfileVisibility(line, checked)
-			)
+		showAllButton = QPushButton("Show all", profileControlsBox)
+		hideAllButton = QPushButton("Hide all", profileControlsBox)
 
-			row = index // 4
-			column = index % 4
-
-			checkboxLayout.addWidget(
-				checkbox,
-				row,
-				column
-			)
-
-			profileCheckboxes.append(
-				checkbox
-			)
-
-		profileControlsLayout.addLayout(
-			checkboxLayout
-		)
-
-		showAllButton = QPushButton(
-			"Show all",
-			profileControlsBox
-		)
-
-		hideAllButton = QPushButton(
-			"Hide all",
-			profileControlsBox
-		)
-
-		def setAllProfileVisibility(visible):
-			for checkbox, plotLine in zip(
-				profileCheckboxes,
-				profilePlotLines
-			):
-				checkbox.blockSignals(True)
-
-				checkbox.setChecked(
-					visible
-				)
-
-				checkbox.blockSignals(False)
-
-				plotLine.set_visible(
-					visible
-				)
-
-			updateProfileLegend()
-
-			canvas.draw_idle()
-
-		showAllButton.clicked.connect(
-			lambda:
-			setAllProfileVisibility(True)
-		)
-
-		hideAllButton.clicked.connect(
-			lambda:
-			setAllProfileVisibility(False)
-		)
+		showAllButton.clicked.connect(lambda: self.setAllOpenLineProfileVisibility(True))
+		hideAllButton.clicked.connect(lambda: self.setAllOpenLineProfileVisibility(False))
 
 		visibilityButtonLayout = QHBoxLayout()
-
-		visibilityButtonLayout.addWidget(
-			showAllButton
-		)
-
-		visibilityButtonLayout.addWidget(
-			hideAllButton
-		)
-
+		visibilityButtonLayout.addWidget(showAllButton)
+		visibilityButtonLayout.addWidget(hideAllButton)
 		visibilityButtonLayout.addStretch(1)
 
-		profileControlsLayout.addLayout(
-			visibilityButtonLayout
-		)
+		profileControlsLayout.addLayout(visibilityButtonLayout)
 
-		# selected profile information
-		activeProfile = self.line_profiles[
-			self.active_line_profile_index
-		]
+		# add every currently stored profile
+		for profile in self.line_profiles:
+			self.addProfileToOpenLineProfilePlot(profile)
+
+		activeProfile = self.line_profiles[self.active_line_profile_index]
 
 		x1, y1 = activeProfile["start"]
 		x2, y2 = activeProfile["end"]
 
-		length = np.hypot(
-			x2 - x1,
-			y2 - y1
-		)
+		length = np.hypot(x2 - x1, y2 - y1)
 
 		infoLabel = QLabel(
 			"Selected profile %d    "
@@ -3239,61 +3147,283 @@ class SimulatorWidget(QWidget):
 			)
 		)
 
-		saveButton = QPushButton(
-			"Save selected profile",
-			dialog
-		)
+		self.line_profile_plot_info_label = infoLabel
 
-		saveButton.clicked.connect(
-			self.saveLineProfile
-		)
+		saveButton = QPushButton("Save selected profile", dialog)
+		saveButton.clicked.connect(self.saveLineProfile)
 
-		closeButton = QPushButton(
-			"Close",
-			dialog
-		)
-
-		closeButton.clicked.connect(
-			dialog.close
-		)
+		closeButton = QPushButton("Close", dialog)
+		closeButton.clicked.connect(dialog.close)
 
 		buttonLayout = QHBoxLayout()
-
-		buttonLayout.addWidget(
-			saveButton
-		)
-
+		buttonLayout.addWidget(saveButton)
 		buttonLayout.addStretch(1)
+		buttonLayout.addWidget(closeButton)
 
-		buttonLayout.addWidget(
-			closeButton
-		)
+		layout.addWidget(toolbar)
+		layout.addWidget(canvas)
+		layout.addWidget(profileControlsBox)
+		layout.addWidget(infoLabel)
+		layout.addLayout(buttonLayout)
 
-		layout.addWidget(
-			toolbar
-		)
+		self.updateOpenLineProfileLegend()
 
-		layout.addWidget(
-			canvas
-		)
-
-		layout.addWidget(
-			profileControlsBox
-		)
-
-		layout.addWidget(
-			infoLabel
-		)
-
-		layout.addLayout(
-			buttonLayout
-		)
-
+		figure.tight_layout()
 		canvas.draw()
 
-		self.line_profile_dialog = dialog
-
 		dialog.show()
+
+	def updateOpenLineProfileLegend(self):
+		if self.line_profile_plot_axis is None:
+			return
+
+		visibleLines = [
+			line
+			for line in self.line_profile_plot_lines.values()
+			if line.get_visible()
+		]
+
+		# Include a new line that is currently being drawn.
+		if self.line_profile_plot_temp_line is not None:
+			if self.line_profile_plot_temp_line.get_visible():
+				visibleLines.append(self.line_profile_plot_temp_line)
+
+		existingLegend = self.line_profile_plot_axis.get_legend()
+
+		if existingLegend is not None:
+			existingLegend.remove()
+
+		if len(visibleLines) > 0:
+			self.line_profile_plot_axis.legend(
+				handles=visibleLines,
+				labels=[line.get_label() for line in visibleLines]
+			)
+
+
+	def setOpenLineProfileVisibility(self, profileNumber, checked):
+		visible = bool(checked)
+
+		plotLine = self.line_profile_plot_lines.get(profileNumber)
+
+		if plotLine is None:
+			return
+
+		plotLine.set_visible(visible)
+		self.line_profile_plot_visibility[profileNumber] = visible
+
+		self.updateOpenLineProfileLegend()
+
+		if self.line_profile_plot_canvas is not None:
+			self.line_profile_plot_canvas.draw_idle()
+
+
+	def setAllOpenLineProfileVisibility(self, visible):
+		for profileNumber, plotLine in self.line_profile_plot_lines.items():
+			plotLine.set_visible(visible)
+			self.line_profile_plot_visibility[profileNumber] = visible
+
+			checkbox = self.line_profile_plot_checkboxes.get(profileNumber)
+
+			if checkbox is not None:
+				checkbox.blockSignals(True)
+				checkbox.setChecked(visible)
+				checkbox.blockSignals(False)
+
+		self.updateOpenLineProfileLegend()
+
+		if self.line_profile_plot_canvas is not None:
+			self.line_profile_plot_canvas.draw_idle()
+
+
+	def addProfileToOpenLineProfilePlot(self, profile):
+		if self.line_profile_plot_axis is None:
+			return
+
+		if self.line_profile_plot_checkbox_layout is None:
+			return
+
+		if self.line_profile_plot_controls_box is None:
+			return
+
+		profileNumber = profile["number"]
+
+		# if this profile already has a curve then just update it
+		existingLine = self.line_profile_plot_lines.get(profileNumber)
+
+		if existingLine is not None:
+			existingLine.set_data(profile["distance"], profile["values"])
+
+			if self.line_profile_plot_canvas is not None:
+				self.line_profile_plot_axis.relim()
+				self.line_profile_plot_axis.autoscale_view()
+				self.line_profile_plot_canvas.draw_idle()
+
+			return
+
+		visible = self.line_profile_plot_visibility.get(profileNumber, True)
+		self.line_profile_plot_visibility[profileNumber] = visible
+
+		# if this profile began as the temporary line being drawn then reuse that curve INSTEAD of creating another one
+		if self.line_profile_plot_temp_line is not None:
+			plotLine = self.line_profile_plot_temp_line
+			self.line_profile_plot_temp_line = None
+
+			plotLine.set_data(profile["distance"], profile["values"])
+			plotLine.set_color(profile["color"])
+			plotLine.set_label(f"Profile {profileNumber}")
+			plotLine.set_visible(visible)
+
+		else:
+			plotLine, = self.line_profile_plot_axis.plot(
+				profile["distance"],
+				profile["values"],
+				color=profile["color"],
+				linewidth=1.5,
+				label=f"Profile {profileNumber}",
+				visible=visible
+			)
+
+		self.line_profile_plot_lines[profileNumber] = plotLine
+
+		checkbox = QCheckBox(f"Profile {profileNumber}", self.line_profile_plot_controls_box)
+		checkbox.setChecked(visible)
+
+		checkbox.toggled.connect(
+			lambda checked, number=profileNumber:
+			self.setOpenLineProfileVisibility(number, checked)
+		)
+
+		index = len(self.line_profile_plot_checkboxes)
+
+		row = index // 4
+		column = index % 4
+
+		self.line_profile_plot_checkbox_layout.addWidget(checkbox, row, column)
+
+		self.line_profile_plot_checkboxes[profileNumber] = checkbox
+
+		self.updateOpenLineProfileLegend()
+
+		self.line_profile_plot_axis.relim()
+		self.line_profile_plot_axis.autoscale_view()
+
+		if self.line_profile_plot_canvas is not None:
+			self.line_profile_plot_canvas.draw_idle()
+
+	def refreshOpenLineProfilePlot(self):
+		if self.line_profile_dialog is None or not self.line_profile_dialog.isVisible():
+			return
+
+		if self.line_profile_plot_axis is None or self.line_profile_plot_checkbox_layout is None:
+			return
+
+		# Remove any temporary curve.
+		if self.line_profile_plot_temp_line is not None:
+			try:
+				self.line_profile_plot_temp_line.remove()
+			except Exception:
+				pass
+
+			self.line_profile_plot_temp_line = None
+
+		# Remove the existing plotted curves.
+		for plotLine in list(self.line_profile_plot_lines.values()):
+			try:
+				plotLine.remove()
+			except Exception:
+				pass
+
+		self.line_profile_plot_lines = {}
+
+		# Remove the existing profile checkboxes.
+		for checkbox in list(self.line_profile_plot_checkboxes.values()):
+			self.line_profile_plot_checkbox_layout.removeWidget(checkbox)
+			checkbox.deleteLater()
+
+		self.line_profile_plot_checkboxes = {}
+
+		# Re-add the currently stored profiles to the SAME popup.
+		for profile in self.line_profiles:
+			self.addProfileToOpenLineProfilePlot(profile)
+
+		self.updateOpenLineProfileLegend()
+
+		self.line_profile_plot_axis.relim()
+		self.line_profile_plot_axis.autoscale_view()
+
+		if self.line_profile_plot_canvas is not None:
+			self.line_profile_plot_canvas.draw_idle()
+
+	def updateOpenLineProfileInfo(self):
+		if self.line_profile_plot_info_label is None:
+			return
+
+		if self.line_profile_dialog is None or not self.line_profile_dialog.isVisible():
+			return
+
+		if self.active_line_profile_index is None:
+			return
+
+		if self.active_line_profile_index < 0 or self.active_line_profile_index >= len(self.line_profiles):
+			return
+
+		profile = self.line_profiles[self.active_line_profile_index]
+
+		x1, y1 = self.line_profile_start
+		x2, y2 = self.line_profile_end
+
+		length = np.hypot(x2 - x1, y2 - y1)
+
+		self.line_profile_plot_info_label.setText(
+			"Selected profile %d    "
+			"Start: (%.3f, %.3f) nm    "
+			"End: (%.3f, %.3f) nm    "
+			"Length: %.3f nm    "
+			"Width: %d px"
+			% (
+				profile["number"],
+				x1,
+				y1,
+				x2,
+				y2,
+				length,
+				self.line_profile_width_pixels
+			)
+		)
+
+	def updateOpenLineProfilePlot(self):
+		if self.line_profile_dialog is None:
+			return
+
+		if not self.line_profile_dialog.isVisible():
+			return
+
+		if self.active_line_profile_index is None:
+			return
+
+		if self.line_profile_distance is None or self.line_profile_values is None:
+			return
+
+		if self.line_profile_plot_axis is None or self.line_profile_plot_canvas is None:
+			return
+
+		if self.active_line_profile_index < 0 or self.active_line_profile_index >= len(self.line_profiles):
+			return
+
+		profile = self.line_profiles[self.active_line_profile_index]
+		profileNumber = profile["number"]
+
+		plotLine = self.line_profile_plot_lines.get(profileNumber)
+
+		if plotLine is None:
+			return
+
+		plotLine.set_data(self.line_profile_distance, self.line_profile_values)
+
+		self.line_profile_plot_axis.relim()
+		self.line_profile_plot_axis.autoscale_view()
+
+		self.line_profile_plot_canvas.draw_idle()
 
 	def saveLineProfile(self):
 		if self.line_profile_distance is None:
@@ -3364,6 +3494,19 @@ class SimulatorWidget(QWidget):
 
 		profile = self.line_profiles[index]
 
+		# preserve visibility for the profiles that will remain
+		remainingVisibility = {}
+		newNumber = 1
+
+		for oldIndex, remainingProfile in enumerate(self.line_profiles):
+			if oldIndex == index:
+				continue
+
+			oldNumber = remainingProfile["number"]
+			remainingVisibility[newNumber] = self.line_profile_plot_visibility.get(oldNumber, True)
+
+			newNumber += 1
+
 		# remvoe the selected profile's artists
 		for artistName in (
 			"line_artist",
@@ -3392,6 +3535,7 @@ class SimulatorWidget(QWidget):
 				labelArtist.set_text(str(number))
 
 		self.line_profile_next_number = len(self.line_profiles) + 1
+		self.line_profile_plot_visibility = remainingVisibility
 
 		self.refreshLineProfileTable()
 
@@ -3417,6 +3561,14 @@ class SimulatorWidget(QWidget):
 
 			self.line_profile_status_label.setText("No line selected.")
 
+			if self.line_profile_dialog is not None:
+				try:
+					self.line_profile_dialog.close()
+				except Exception:
+					pass
+
+				self.line_profile_dialog = None
+
 			self.canvas.draw_idle()
 
 			return
@@ -3425,6 +3577,7 @@ class SimulatorWidget(QWidget):
 		newIndex = min(index, len(self.line_profiles) - 1)
 
 		self.activateLineProfile(newIndex)
+		self.refreshOpenLineProfilePlot()
 
 		self.canvas.draw_idle()
 		
