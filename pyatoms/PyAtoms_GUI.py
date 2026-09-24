@@ -495,7 +495,7 @@ class Window(QMainWindow):
         # prefer an SXM if several files were dropped
         filePath = next((path for path in filePaths if path.lower().endswith(".sxm")), filePaths[0])
 
-        loaded = self.SimWidget.loadExperimentalData(filePath)
+        loaded = self.SimWidget.loadExperimentalFile(filePath)
 
         if loaded:
             event.acceptProposedAction()

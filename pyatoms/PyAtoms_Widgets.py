@@ -687,7 +687,7 @@ class SimulatorWidget(QWidget):
 		self.experimental_file_path = filePath
 
 		self.experimental_status_label.setText(
-			f"{experimentalData.fileName}\n"
+			f"{experimentalData.file_name}\n"
 			f"Channel: {channel}, Direction: {direction}\n"
 			f"{experimentalData.nx} x {experimentalData.ny} pixels	"
 			f"{experimentalData.x_range_nm:.3f} x {experimentalData.y_range_nm:.3f} nm"
