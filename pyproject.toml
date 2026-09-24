@@ -18,7 +18,9 @@ dependencies = [
     "scipy",
     "matplotlib",
     "QtPy",
-    "PyQt6"
+    "PyQt6",
+    "xarray",
+    "xarray-nanonis"
 ]
 
 [project.urls]
