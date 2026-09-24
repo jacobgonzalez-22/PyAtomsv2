@@ -51,6 +51,9 @@ class Window(QMainWindow):
     # constructor - always include this
     def __init__(self, parent=None):
         super(Window, self).__init__(parent) # always need to do this because our class Window is inheriting from parent QDialog....
+
+        self.setAcceptDrops(True) # allows drag and drop of files into the gui window
+
         self.initUI() # Call the function that initializes everything
         
         
@@ -109,6 +112,7 @@ class Window(QMainWindow):
         timeEstimatorWidget = self.SimWidget.initTimeEstimatorTabs()
         moireCalculatorWidget = self.SimWidget.initMoireCalcWidget()
         lineProfileWidget = self.SimWidget.initLineProfileWidget()
+        experimentalDataWidget = self.SimWidget.initExperimentalDataWidget()
 
         # build the three lattice panels before creating the plot
         lattice1Widget = self.SimWidget.initLattice1Parameters()
@@ -287,18 +291,25 @@ class Window(QMainWindow):
         analysisToolsLayout.setRowStretch(0, 1)
         analysisToolsLayout.setRowStretch(1, 0)
 
+        # page 3: experimental data
+        experimentalPage = QWidget()
+
+        experimentalLayout = QVBoxLayout(experimentalPage)
+        experimentalLayout.setContentsMargins(4, 4, 4, 4)
+        experimentalLayout.setSpacing(6)
+        experimentalLayout.setAlignment(Qt.AlignTop)
+
+        experimentalDataWidget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+
+        experimentalLayout.addWidget(experimentalDataWidget)
+        experimentalLayout.addStretch(1)
+
 
         # add both pages
 
-        self.topControlsTabs.addTab(
-            mainControlsPage,
-            "Main controls"
-        )
-
-        self.topControlsTabs.addTab(
-            analysisToolsPage,
-            "Analysis tools"
-        )
+        self.topControlsTabs.addTab(mainControlsPage, "Main controls")
+        self.topControlsTabs.addTab(analysisToolsPage,"Analysis tools")
+        self.topControlsTabs.addTab(experimentalPage,"Experimental comparison")
 
         self.topControlsTabs.currentChanged.connect(
             lambda index: QTimer.singleShot(
@@ -462,6 +473,38 @@ class Window(QMainWindow):
         maximumControlsHeight = max(200, int(totalHeight * 0.39))
         controlsHeight = max(180, min(self.topControlsPreferredHeight, maximumControlsHeight))
         self.rightSplitter.setSizes([controlsHeight, max(totalHeight - controlsHeight, 1)])
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+
+        event.ignore()
+
+    def dropEvent(self, event):
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+
+        filePaths = [url.toLocalFile() for url in event.mimeData().urls() if url.toLocalFile()]
+
+        if len(filePaths) == 0:
+            event.ignore()
+            return
+
+        # prefer an SXM if several files were dropped
+        filePath = next((path for path in filePaths if path.lower().endswith(".sxm")), filePaths[0])
+
+        loaded = self.SimWidget.loadExperimentalData(filePath)
+
+        if loaded:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+        
+
+        
+
 
 
     # Overriding keyPressEvent so that if the escape button is pressed, it doesn't automatically close the program

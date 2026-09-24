@@ -70,6 +70,7 @@ from .hexatoms import hexatoms, evaluateHexLatticeAtCoords
 from .squareatoms import squareatoms, evaluateSquareLatticeAtCoords
 from .stripes import stripes, evaluateStripesAtCoords
 from .moirelattice import moirelattice, calculateMoireWavelength, calculateMoireTwistAngle, calculateMoireLatticeConstant, calculateMixedMoireComponents
+from .experimental_data import ExperimentalData	
 
 # Unicode chart for greek letters: https://unicode.org/charts/PDF/U0370.pdf
 # type '\u[CODE]'. Example: for alpha, it says 03B1, so type '\u03b1'
@@ -212,6 +213,10 @@ class SimulatorWidget(QWidget):
 		self.line_profile_edit_press_cid = None
 		self.line_profile_edit_motion_cid = None
 		self.line_profile_edit_release_cid = None
+
+		# experimental STM data
+		self.experimental_data = None
+		self.experimental_file_path = None
 
 		self.saveFileName = ''
 
@@ -600,6 +605,99 @@ class SimulatorWidget(QWidget):
 		Z_raw = self.evaluateCurrentStructureAtCoords(X_sample, Y_sample)
 
 		return Z_raw
+
+	def initExperimentalDataWidget(self):
+		groupBox = QGroupBox("Experimental STM data")
+
+		layout = QVBoxLayout()
+		layout.setContentsMargins(8, 8, 8, 8)
+		layout.setSpacing(6)
+
+		description = QLabel(
+			"Import a Nanonis SXM file for comparison with the simulated lattice. "
+			"You can also drag and drop an SXM file anywhere onto the PyAtoms window."
+		)
+		description.setWordWrap(True)
+
+		self.experimental_import_btn = QPushButton("Import SXM file", self)
+		self.experimental_import_btn.setAutoDefault(False)
+		self.experimental_import_btn.clicked.connect(self.chooseExperimentalFile)
+
+		self.experimental_status_label = QLabel("No experimental data loaded.")
+		self.experimental_status_label.setWordWrap(True)
+
+		layout.addWidget(description)
+		layout.addWidget(self.experimental_import_btn)
+		layout.addWidget(self.experimental_status_label)
+		layout.addStretch(1)
+
+		groupBox.setLayout(layout)
+
+		return groupBox
+
+	def chooseExperimentalFile(self):
+		filePath, _ = QFileDialog.getOpenFileName(
+			self,
+			"Import experimental STM data",
+			os.getcwd(),
+			"Nanonis SXM files (*.sxm)"
+		)
+
+		if filePath == "":
+			return
+
+		self.loadExperimentalFile(filePath)
+
+	def loadExperimentalFile(self, filePath):
+		if not filePath:
+			return False
+
+		if not filePath.lower().endswith(".sxm"):
+			QMessageBox.warning(
+				self,
+				"Unsupported file",
+				"PyAtoms currently supports Nanonis .sxm files for experimental data."
+			)
+			return False
+
+		try:
+			experimentalData = ExperimentalData(filePath)
+
+			if "Z" in experimentalData.channels:
+				channel = "Z"
+			else:
+				channel = experimentalData.channels[0]
+
+			if "forward" in experimentalData.directions:
+				direction = "forward"
+			else:
+				direction = experimentalData.directions[0]
+
+			experimentalData.load_channel(channel, direction)
+
+		except Exception as error:
+			QMessageBox.critical(
+				self,
+				"Experimental data import error",
+				"The SXM file could not be loaded.\n\n" + str(error)
+			)
+			return False
+
+		self.experimental_data = experimentalData
+		self.experimental_file_path = filePath
+
+		self.experimental_status_label.setText(
+			f"{experimentalData.fileName}\n"
+			f"Channel: {channel}, Direction: {direction}\n"
+			f"{experimentalData.nx} x {experimentalData.ny} pixels	"
+			f"{experimentalData.x_range_nm:.3f} x {experimentalData.y_range_nm:.3f} nm"
+		)
+
+		self.experimental_status_label.setToolTip(filePath)
+
+		return True
+
+	
 
 	def initImageParameters(self):
 		groupBox = QGroupBox("Image parameters")
