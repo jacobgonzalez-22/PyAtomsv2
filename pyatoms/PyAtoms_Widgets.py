@@ -177,6 +177,12 @@ class SimulatorWidget(QWidget):
 		self.line_profile_distance = None
 		self.line_profile_values = None
 		self.line_profile_source = None
+
+		self.line_profile_experimental_distance = None
+		self.line_profile_experimental_values = None
+		self.line_profile_experimental_source = None
+		self.line_profile_experimental_width_pixels = None
+
 		self.line_profile_width_pixels = 1
 
 		self.line_profile_color = None
@@ -190,6 +196,8 @@ class SimulatorWidget(QWidget):
 		self.line_profile_plot_axis = None
 		self.line_profile_plot_canvas = None
 		self.line_profile_plot_lines = {}
+		self.line_profile_plot_experimental_lines = {}
+
 		self.line_profile_plot_visibility = {}
 
 		self.line_profile_plot_checkboxes = {}
@@ -210,6 +218,9 @@ class SimulatorWidget(QWidget):
 		self.active_line_profile_index = None
 		self.line_profile_next_number = 1
 
+		# line profiles drawn on the experimental image during comparison
+		self.experimental_line_profile_artists = []
+
 		self.line_profile_edit_press_cid = None
 		self.line_profile_edit_motion_cid = None
 		self.line_profile_edit_release_cid = None
@@ -217,6 +228,14 @@ class SimulatorWidget(QWidget):
 		# experimental STM data
 		self.experimental_data = None
 		self.experimental_file_path = None
+		self.comparison_mode = False
+
+		self.comparison_fft_window = "Hann"
+		self.comparison_fft_scale = "Log"
+
+		# simulation plot colorbars
+		self.cb_r = None
+		self.cb_k = None
 
 		self.saveFileName = ''
 
@@ -623,6 +642,15 @@ class SimulatorWidget(QWidget):
 		self.experimental_import_btn.setAutoDefault(False)
 		self.experimental_import_btn.clicked.connect(self.chooseExperimentalFile)
 
+		self.experimental_clear_btn = QPushButton("Clear file", self)
+		self.experimental_clear_btn.setAutoDefault(False)
+		self.experimental_clear_btn.setEnabled(False)
+		self.experimental_clear_btn.clicked.connect(self.clearExperimentalFile)
+
+		fileButtonLayout = QHBoxLayout()
+		fileButtonLayout.addWidget(self.experimental_import_btn, 1)
+		fileButtonLayout.addWidget(self.experimental_clear_btn)
+
 		self.experimental_status_label = QLabel("No experimental data loaded.")
 		self.experimental_status_label.setWordWrap(True)
 
@@ -663,6 +691,24 @@ class SimulatorWidget(QWidget):
 		self.experimental_line_flatten_dropdown.setEnabled(False)
 		self.experimental_line_flatten_dropdown.currentTextChanged.connect(self.updateExperimentalProcessing)
 
+		# FFT window
+		fftWindowLabel = QLabel("FFT window:")
+
+		self.comparison_fft_window_dropdown = QComboBox(self)
+		self.comparison_fft_window_dropdown.addItems(["None", "Hann"])
+		self.comparison_fft_window_dropdown.setCurrentText(self.comparison_fft_window)
+		self.comparison_fft_window_dropdown.setEnabled(False)
+		self.comparison_fft_window_dropdown.currentTextChanged.connect(self.updateComparisonFFTSettings)
+
+		# FFT display scale
+		fftScaleLabel = QLabel("FFT scale:")
+
+		self.comparison_fft_scale_dropdown = QComboBox(self)
+		self.comparison_fft_scale_dropdown.addItems(["Linear", "Log"])
+		self.comparison_fft_scale_dropdown.setCurrentText(self.comparison_fft_scale)
+		self.comparison_fft_scale_dropdown.setEnabled(False)
+		self.comparison_fft_scale_dropdown.currentTextChanged.connect(self.updateComparisonFFTSettings)
+
 		# row 1
 		controlsLayout.addWidget(channelLabel, 0, 0)
 		controlsLayout.addWidget(self.experimental_channel_dropdown, 0, 1)
@@ -677,12 +723,19 @@ class SimulatorWidget(QWidget):
 		controlsLayout.addWidget(lineFlattenLabel, 1, 2)
 		controlsLayout.addWidget(self.experimental_line_flatten_dropdown, 1, 3)
 
+		# row 3
+		controlsLayout.addWidget(fftWindowLabel, 2, 0)
+		controlsLayout.addWidget(self.comparison_fft_window_dropdown, 2, 1)
+
+		controlsLayout.addWidget(fftScaleLabel, 2, 2)
+		controlsLayout.addWidget(self.comparison_fft_scale_dropdown, 2, 3)
+
 		# let the dropdown columns take the available width
 		controlsLayout.setColumnStretch(1, 1)
 		controlsLayout.setColumnStretch(3, 1)
 
 		layout.addWidget(description)
-		layout.addWidget(self.experimental_import_btn)
+		layout.addLayout(fileButtonLayout)
 		layout.addWidget(self.experimental_status_label)
 		layout.addSpacing(4)
 		layout.addLayout(controlsLayout)
@@ -772,6 +825,8 @@ class SimulatorWidget(QWidget):
 
 		self.experimental_leveling_dropdown.setEnabled(True)
 		self.experimental_line_flatten_dropdown.setEnabled(True)
+		self.comparison_fft_window_dropdown.setEnabled(True)
+		self.comparison_fft_scale_dropdown.setEnabled(True)
 
 		self.experimental_status_label.setText(
 			f"{experimentalData.file_name}\n"
@@ -780,10 +835,95 @@ class SimulatorWidget(QWidget):
 		)
 
 		self.experimental_status_label.setToolTip(filePath)
+		self.experimental_clear_btn.setEnabled(True)
+
+		self.comparison_mode = True
+
+		if hasattr(self, "simulation_plot_tabs"):
+			self.simulation_plot_tabs.setCurrentIndex(0)
+			self.simulation_plot_tabs.show()
 
 		self.updateExperimentalPlot()
+		self.plotAtoms()
 
 		return True
+
+	def clearExperimentalFile(self):
+		if self.experimental_data is None:
+			return
+
+		# close the xarray dataset if it has an open file handle
+		try:
+			self.experimental_data.dataset.close()
+		except Exception:
+			pass
+
+		self.experimental_data = None
+		self.experimental_file_path = None
+
+		# reset file information
+		self.experimental_status_label.setText("No experimental data loaded.")
+		self.experimental_status_label.setToolTip("")
+
+		# reset controls without triggering any callbacks
+		self.experimental_channel_dropdown.blockSignals(True)
+		self.experimental_direction_dropdown.blockSignals(True)
+		self.experimental_leveling_dropdown.blockSignals(True)
+		self.experimental_line_flatten_dropdown.blockSignals(True)
+
+		self.experimental_channel_dropdown.clear()
+		self.experimental_direction_dropdown.clear()
+
+		self.experimental_leveling_dropdown.setCurrentText("None")
+		self.experimental_line_flatten_dropdown.setCurrentText("None")
+
+		self.experimental_channel_dropdown.blockSignals(False)
+		self.experimental_direction_dropdown.blockSignals(False)
+		self.experimental_leveling_dropdown.blockSignals(False)
+		self.experimental_line_flatten_dropdown.blockSignals(False)
+
+		self.experimental_channel_dropdown.setEnabled(False)
+		self.experimental_direction_dropdown.setEnabled(False)
+		self.experimental_leveling_dropdown.setEnabled(False)
+		self.experimental_line_flatten_dropdown.setEnabled(False)
+		self.comparison_fft_window_dropdown.setEnabled(False)
+		self.comparison_fft_scale_dropdown.setEnabled(False)
+
+		self.experimental_clear_btn.setEnabled(False)
+
+		# remove old experimental plots
+		if hasattr(self, "experimental_figure"):
+			self.experimental_figure.clear()
+
+		if hasattr(self, "experimental_fft_figure"):
+			self.experimental_fft_figure.clear()
+
+		if hasattr(self, "experimental_canvas"):
+			self.experimental_canvas.draw_idle()
+
+		if hasattr(self, "experimental_fft_canvas"):
+			self.experimental_fft_canvas.draw_idle()
+
+		# return to the normal simulation only view
+		if hasattr(self, "experimental_plot_widget"):
+			self.experimental_plot_widget.hide()
+
+		self.comparison_mode = False
+
+		if hasattr(self, "simulation_plot_tabs"):
+			self.simulation_plot_tabs.hide()
+
+		self.plotAtoms()
+
+	def updateComparisonFFTSettings(self):
+		self.comparison_fft_window = self.comparison_fft_window_dropdown.currentText()
+		self.comparison_fft_scale = self.comparison_fft_scale_dropdown.currentText()
+
+		if self.experimental_data is not None:
+			self.updateExperimentalPlot()
+
+		if self.comparison_mode:
+			self.plotAtoms()
 
 	def updateExperimentalSelection(self):
 		if self.experimental_data is None:
@@ -811,6 +951,7 @@ class SimulatorWidget(QWidget):
 			return
 
 		self.updateExperimentalPlot()
+		self.refreshExperimentalLineProfileData()
 
 	def updateExperimentalProcessing(self):
 		if self.experimental_data is None:
@@ -834,14 +975,30 @@ class SimulatorWidget(QWidget):
 			return
 
 		self.updateExperimentalPlot()
+		self.refreshExperimentalLineProfileData()
 
 	def initExperimentalMatplotlibFig(self):
 		groupBox = QGroupBox("Experimental")
 
+		# creating a Vertical Box layout for storing widgets
 		mainLayout = QVBoxLayout()
-		mainLayout.setContentsMargins(4, 4, 4, 4)
 
-		self.experimental_plot_tabs = QTabWidget(self)
+		# tabs for switching between the experimental real-space image and FFT
+		self.experimental_plot_tabs = QTabBar(self)
+		self.experimental_plot_tabs.addTab("Real space")
+		self.experimental_plot_tabs.addTab("FFT")
+		self.experimental_plot_tabs.setCurrentIndex(0)
+
+		# center the tabs above the plot
+		tabLayout = QHBoxLayout()
+		tabLayout.addStretch(1)
+		tabLayout.addWidget(self.experimental_plot_tabs)
+		tabLayout.addStretch(1)
+
+		mainLayout.addLayout(tabLayout)
+
+		# stack the two experimental plot pages so only one is visible at a time
+		self.experimental_plot_stack = QStackedWidget(self)
 
 		# real-space tab
 		realSpacePage = QWidget()
@@ -867,16 +1024,94 @@ class SimulatorWidget(QWidget):
 		fftLayout.addWidget(self.experimental_fft_toolbar)
 		fftLayout.addWidget(self.experimental_fft_canvas)
 
-		self.experimental_plot_tabs.addTab(realSpacePage, "Real space")
-		self.experimental_plot_tabs.addTab(fftPage, "FFT")
+		self.experimental_plot_stack.addWidget(realSpacePage)
+		self.experimental_plot_stack.addWidget(fftPage)
 
-		mainLayout.addWidget(self.experimental_plot_tabs)
+		self.experimental_plot_tabs.currentChanged.connect(
+			self.experimental_plot_stack.setCurrentIndex
+		)
+
+		mainLayout.addWidget(self.experimental_plot_stack)
 
 		groupBox.setLayout(mainLayout)
 
 		self.experimental_plot_widget = groupBox
 
 		return groupBox
+
+	def calculateComparisonFFTDisplay(self, image, dx, dy):
+		image = np.asarray(image, dtype=float)
+
+		ny, nx = image.shape
+
+		# replace invalid pixels and remove the DC offset
+		finiteMask = np.isfinite(image)
+
+		if np.any(finiteMask):
+			imageMean = np.mean(image[finiteMask])
+			fftInput = np.nan_to_num(
+				image - imageMean,
+				nan=0.0,
+				posinf=0.0,
+				neginf=0.0
+			)
+		else:
+			fftInput = np.zeros_like(image)
+
+		# optionally reduce edge discontinuities before taking the FFT
+		if self.comparison_fft_window == "Hann":
+			windowX = np.hanning(nx)
+			windowY = np.hanning(ny)
+			window2D = np.outer(windowY, windowX)
+
+			fftInput = fftInput * window2D
+
+		elif self.comparison_fft_window != "None":
+			raise ValueError(
+				f"Unknown FFT window: {self.comparison_fft_window}"
+			)
+
+		fftComplex = np.fft.fftshift(np.fft.fft2(fftInput))
+		fftMagnitude = np.abs(fftComplex)
+
+		# choose the FFT display scale
+		if self.comparison_fft_scale == "Log":
+			fftScaled = np.log1p(fftMagnitude)
+
+		elif self.comparison_fft_scale == "Linear":
+			fftScaled = fftMagnitude
+
+		else:
+			raise ValueError(
+				f"Unknown FFT scale: {self.comparison_fft_scale}"
+			)
+
+		# use robust display normalization so a few intense Fourier components
+		# do not hide weaker reciprocal-space features
+		displayMin = np.percentile(fftScaled, 70.0)
+		displayMax = np.percentile(fftScaled, 99.9)
+
+		if displayMax > displayMin:
+			fftDisplay = (fftScaled - displayMin) / (displayMax - displayMin)
+			fftDisplay = np.clip(fftDisplay, 0.0, 1.0)
+		else:
+			fftDisplay = np.zeros_like(fftScaled)
+
+		# physical reciprocal-space coordinates
+		kx = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(nx, d=dx))
+		ky = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(ny, d=dy))
+
+		dkx = abs(kx[1] - kx[0])
+		dky = abs(ky[1] - ky[0])
+
+		fftExtent = [
+			kx[0] - dkx / 2,
+			kx[-1] + dkx / 2,
+			ky[0] - dky / 2,
+			ky[-1] + dky / 2
+		]
+
+		return fftDisplay, fftExtent
 
 
 	def updateExperimentalPlot(self):
@@ -928,56 +1163,15 @@ class SimulatorWidget(QWidget):
 
 		ny, nx = image.shape
 
-		# replace invalid pixels and remove the DC offset
-		finiteMask = np.isfinite(image)
-
-		if np.any(finiteMask):
-			imageMean = np.mean(image[finiteMask])
-			fftInput = np.nan_to_num(image - imageMean, nan=0.0, posinf=0.0, neginf=0.0)
-
-		else:
-			fftInput = np.zeros_like(image)
-
-		# reduce edge discontinuities before taking the FFT
-		windowX = np.hanning(nx)
-		windowY = np.hanning(ny)
-		window2D = np.outer(windowY, windowX)
-
-		fftInput = fftInput * window2D
-
-		fftComplex = np.fft.fftshift(np.fft.fft2(fftInput))
-		fftMagnitude = np.abs(fftComplex)
-
-		# log scaling makes weaker reciprocal-space peaks visible.
-		fftLog = np.log1p(fftMagnitude)
-
-		# too strong normalization prevents a few intense low-k pixels from controlling the entire displayed contrast
-		displayMin = np.percentile(fftLog, 70.0)
-		displayMax = np.percentile(fftLog, 99.9)
-
-		if displayMax > displayMin:
-			fftDisplay = (fftLog - displayMin) / (displayMax - displayMin)
-			fftDisplay = np.clip(fftDisplay, 0.0, 1.0)
-
-		else:
-			fftDisplay = np.zeros_like(fftLog)
-
-		# k-space coordinates from the native SXM pixel spacing
+		# calculate the FFT using the shared comparison display settings
 		dx = abs(float(np.mean(np.diff(self.experimental_data.x_nm))))
 		dy = abs(float(np.mean(np.diff(self.experimental_data.y_nm))))
 
-		kx = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(nx, d=dx))
-		ky = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(ny, d=dy))
-
-		dkx = abs(kx[1] - kx[0])
-		dky = abs(ky[1] - ky[0])
-
-		fftExtent = [
-			kx[0] - dkx / 2,
-			kx[-1] + dkx / 2,
-			ky[0] - dky / 2,
-			ky[-1] + dky / 2
-		]
+		fftDisplay, fftExtent = self.calculateComparisonFFTDisplay(
+			image,
+			dx,
+			dy
+		)
 
 		self.experimental_fft_plot = self.experimental_fft_ax.imshow(
 			fftDisplay,
@@ -991,7 +1185,7 @@ class SimulatorWidget(QWidget):
 
 		self.experimental_fft_ax.set_xlabel("$k_x$ (nm⁻¹)")
 		self.experimental_fft_ax.set_ylabel("$k_y$ (nm⁻¹)")
-		self.experimental_fft_ax.set_title("FFT - Hann window, log scale")
+		self.experimental_fft_ax.set_title("FFT")
 		self.experimental_fft_ax.grid(False)
 
 		fftColorbar = self.experimental_fft_figure.colorbar(
@@ -1002,6 +1196,8 @@ class SimulatorWidget(QWidget):
 		)
 
 		fftColorbar.ax.tick_params(width=0.5)
+
+		self.redrawExperimentalLineProfiles()
 
 		self.experimental_canvas.draw_idle()
 		self.experimental_fft_canvas.draw_idle()
@@ -2147,6 +2343,8 @@ class SimulatorWidget(QWidget):
 		if self.line_profile_label_artist is not None:
 			self.line_profile_label_artist.set_visible(self.line_profile_show_numbers)
 
+		self.redrawExperimentalLineProfiles()
+
 		self.canvas.draw_idle()
 
 	def prepareNewLineProfile(self):
@@ -2161,6 +2359,12 @@ class SimulatorWidget(QWidget):
 		self.line_profile_distance = None
 		self.line_profile_values = None
 		self.line_profile_source = None
+
+		self.line_profile_experimental_distance = None
+		self.line_profile_experimental_values = None
+		self.line_profile_experimental_source = None
+		self.line_profile_experimental_width_pixels = None
+
 		self.line_profile_color = None
 
 		self.line_profile_artist = None
@@ -2205,7 +2409,15 @@ class SimulatorWidget(QWidget):
 		if not hasattr(self, "ax_real"):
 			return
 
-		# Avoid fighting with Matplotlib's pan/zoom tools.
+		# line profiles are real space measurements
+		if self.comparison_mode:
+			if hasattr(self, "simulation_plot_tabs"):
+				self.simulation_plot_tabs.setCurrentIndex(0)
+
+			if hasattr(self, "experimental_plot_tabs"):
+				self.experimental_plot_tabs.setCurrentIndex(0)
+
+		# avoid fighting with matplotlib's pan and zoom tools
 		if hasattr(self, "toolbar") and self.toolbar.mode:
 			self.line_profile_status_label.setText(
 				"Turn off pan/zoom in the plot toolbar first."
@@ -2653,6 +2865,122 @@ class SimulatorWidget(QWidget):
 
 		return lineArtist, startArtist, endArtist, labelArtist
 
+	def clearExperimentalLineProfileArtists(self):
+		for artist in self.experimental_line_profile_artists:
+			try:
+				artist.remove()
+			except Exception:
+				pass
+
+		self.experimental_line_profile_artists = []
+
+
+	def redrawExperimentalLineProfiles(self):
+		if not self.comparison_mode:
+			return
+
+		if self.experimental_data is None:
+			return
+
+		if not hasattr(self, "experimental_ax"):
+			return
+
+		self.clearExperimentalLineProfileArtists()
+
+		for index, profile in enumerate(self.line_profiles):
+			startPoint = profile["start"]
+			endPoint = profile["end"]
+
+			# while editing the active profile, use its current live coordinates
+			if (
+				index == self.active_line_profile_index
+				and self.line_profile_start is not None
+				and self.line_profile_end is not None
+			):
+				startPoint = self.line_profile_start
+				endPoint = self.line_profile_end
+
+			x1, y1 = startPoint
+			x2, y2 = endPoint
+
+			color = profile.get("color", "cyan")
+			number = profile["number"]
+
+			lineArtist, = self.experimental_ax.plot(
+				[x1, x2],
+				[y1, y2],
+				color=color,
+				linewidth=1.2,
+				zorder=10
+			)
+
+			self.experimental_line_profile_artists.append(lineArtist)
+
+			dx = x2 - x1
+			dy = y2 - y1
+			length = np.hypot(dx, dy)
+
+			if length == 0:
+				continue
+
+			normalX = -dy / length
+			normalY = dx / length
+
+			capHalfLength = 0.008 * self.L
+
+			startCap, = self.experimental_ax.plot(
+				[
+					x1 - capHalfLength * normalX,
+					x1 + capHalfLength * normalX
+				],
+				[
+					y1 - capHalfLength * normalY,
+					y1 + capHalfLength * normalY
+				],
+				color=color,
+				linewidth=1.2,
+				zorder=10
+			)
+
+			endCap, = self.experimental_ax.plot(
+				[
+					x2 - capHalfLength * normalX,
+					x2 + capHalfLength * normalX
+				],
+				[
+					y2 - capHalfLength * normalY,
+					y2 + capHalfLength * normalY
+				],
+				color=color,
+				linewidth=1.2,
+				zorder=10
+			)
+
+			self.experimental_line_profile_artists.append(startCap)
+			self.experimental_line_profile_artists.append(endCap)
+
+			if self.line_profile_show_numbers:
+				midX = (x1 + x2) / 2
+				midY = (y1 + y2) / 2
+
+				labelOffset = 0.025 * self.L
+
+				labelArtist = self.experimental_ax.text(
+					midX + labelOffset * normalX,
+					midY + labelOffset * normalY,
+					str(number),
+					color=color,
+					fontweight="normal",
+					fontsize=7,
+					ha="center",
+					va="center",
+					zorder=11
+				)
+
+				self.experimental_line_profile_artists.append(labelArtist)
+
+		self.experimental_canvas.draw_idle()
+
 	def drawStoredLineProfileSelection(self):
 		if self.line_profile_start is None:
 			return
@@ -2708,10 +3036,16 @@ class SimulatorWidget(QWidget):
 			self.line_profile_width_pixels = int(profile["width_pixels"])
 
 			self.calculateLineProfile()
+			self.calculateExperimentalLineProfile()
 
 			profile["distance"] = self.line_profile_distance
 			profile["values"] = self.line_profile_values
 			profile["source"] = self.line_profile_source
+
+			profile["experimental_distance"] = self.line_profile_experimental_distance
+			profile["experimental_values"] = self.line_profile_experimental_values
+			profile["experimental_source"] = self.line_profile_experimental_source
+			profile["experimental_width_pixels"] = self.line_profile_experimental_width_pixels
 
 		# restore whichever profile was active before the redraw
 		if activeIndex is not None and 0 <= activeIndex < len(self.line_profiles):
@@ -2723,6 +3057,10 @@ class SimulatorWidget(QWidget):
 			self.line_profile_distance = profile.get("distance")
 			self.line_profile_values = profile.get("values")
 			self.line_profile_source = profile.get("source")
+			self.line_profile_experimental_distance = profile.get("experimental_distance")
+			self.line_profile_experimental_values = profile.get("experimental_values")
+			self.line_profile_experimental_source = profile.get("experimental_source")
+			self.line_profile_experimental_width_pixels = profile.get("experimental_width_pixels")
 			self.line_profile_artist = profile.get("line_artist")
 			self.line_profile_start_artist = profile.get("start_artist")
 			self.line_profile_end_artist = profile.get("end_artist")
@@ -2854,6 +3192,14 @@ class SimulatorWidget(QWidget):
 		self.line_profile_values = profile.get("values")
 
 		self.line_profile_source = profile.get("source")
+
+		self.line_profile_experimental_distance = profile.get("experimental_distance")
+
+		self.line_profile_experimental_values = profile.get("experimental_values")
+
+		self.line_profile_experimental_source = profile.get("experimental_source")
+
+		self.line_profile_experimental_width_pixels = profile.get("experimental_width_pixels")
 
 		self.line_profile_artist = profile.get("line_artist")
 
@@ -3004,9 +3350,12 @@ class SimulatorWidget(QWidget):
 
 
 		self.updateLineProfileArtists()
+		self.redrawExperimentalLineProfiles()
 		self.updateLineProfileControls()
 
 		self.calculateLineProfile()
+		self.calculateExperimentalLineProfile()
+
 		self.updateOpenLineProfilePlot()
 		self.updateOpenLineProfileInfo()
 
@@ -3032,6 +3381,7 @@ class SimulatorWidget(QWidget):
 		self.line_profile_drag_start_end = None
 
 		self.calculateLineProfile()
+		self.calculateExperimentalLineProfile()
 
 		self.updateActiveLineProfileConstrast()
 
@@ -3208,9 +3558,16 @@ class SimulatorWidget(QWidget):
 			"end": self.line_profile_end,
 			"width_pixels": self.line_profile_width_pixels,
 			"color": tuple(self.line_profile_color),
+
 			"distance": self.line_profile_distance,
 			"values": self.line_profile_values,
 			"source": self.line_profile_source,
+
+			"experimental_distance": self.line_profile_experimental_distance,
+			"experimental_values": self.line_profile_experimental_values,
+			"experimental_source": self.line_profile_experimental_source,
+			"experimental_width_pixels": self.line_profile_experimental_width_pixels,
+
 			"line_artist": self.line_profile_artist,
 			"start_artist": self.line_profile_start_artist,
 			"end_artist": self.line_profile_end_artist,
@@ -3280,7 +3637,9 @@ class SimulatorWidget(QWidget):
 
 		self.drawStoredLineProfileSelection()
 		self.calculateLineProfile()
+		self.calculateExperimentalLineProfile()
 		self.syncActiveLineProfile()
+		self.redrawExperimentalLineProfiles()
 		self.updateLineProfileControls()
 		self.line_profile_show_btn.setEnabled(True)
 		self.line_profile_delete_btn.setEnabled(True)
@@ -3352,6 +3711,7 @@ class SimulatorWidget(QWidget):
 
 		if self.line_profile_start is not None and self.line_profile_end is not None:
 			self.calculateLineProfile()
+			self.calculateExperimentalLineProfile()
 			self.syncActiveLineProfile()
 			self.updateLineProfileControls()
 			self.updateOpenLineProfilePlot()
@@ -3464,6 +3824,269 @@ class SimulatorWidget(QWidget):
 		self.line_profile_values = profile
 		self.line_profile_source = self.fft_filter_display
 
+	def getExperimentalLineProfile(self, startPoint, endPoint, simulationWidthPixels):
+		if self.experimental_data is None:
+			return None
+
+		if self.experimental_data.processed is None:
+			return None
+
+		image = np.asarray(self.experimental_data.processed, dtype=float)
+
+		if image.ndim != 2:
+			return None
+
+		xCoords = np.asarray(self.experimental_data.x_display_nm, dtype=float)
+		yCoords = np.asarray(self.experimental_data.y_display_nm, dtype=float)
+
+		if len(xCoords) < 2 or len(yCoords) < 2:
+			return None
+
+		x1, y1 = startPoint
+		x2, y2 = endPoint
+
+		dxLine = x2 - x1
+		dyLine = y2 - y1
+
+		length = np.hypot(dxLine, dyLine)
+
+		if length == 0:
+			return None
+
+		# unit vectors parallel and perpendicular to the selected line
+		tangentX = dxLine / length
+		tangentY = dyLine / length
+
+		normalX = -tangentY
+		normalY = tangentX
+
+		# native experimental pixel spacing
+		dxExperimental = abs(float(np.mean(np.diff(xCoords))))
+		dyExperimental = abs(float(np.mean(np.diff(yCoords))))
+
+		if dxExperimental == 0 or dyExperimental == 0:
+			return None
+
+		# effective experimental pixel spacing along the selected line
+		linePixelSpacing = 1.0 / np.sqrt(
+			(tangentX / dxExperimental) ** 2
+			+ (tangentY / dyExperimental) ** 2
+		)
+
+		numberSamples = max(
+			2,
+			int(np.ceil(length / linePixelSpacing)) + 1
+		)
+
+		distance = np.linspace(0.0, length, numberSamples)
+
+		xPhysical = np.linspace(x1, x2, numberSamples)
+		yPhysical = np.linspace(y1, y2, numberSamples)
+
+		# Convert the Simulation width from pixels into a physical width.
+		# The original Simulation profile uses offsets:
+		# -(width-1)/2 ... +(width-1)/2 pixels.
+		simulationPixelSpacing = self.L / max(self.pix - 1, 1)
+
+		widthPixels = max(1, int(simulationWidthPixels))
+
+		physicalWidth = (
+			(widthPixels - 1)
+			* simulationPixelSpacing
+		)
+
+		if physicalWidth == 0:
+			experimentalWidthPixels = 1
+			offsetsNm = np.asarray([0.0])
+
+		else:
+			# experimental pixel spacing perpendicular to the line
+			normalPixelSpacing = 1.0 / np.sqrt(
+				(normalX / dxExperimental) ** 2
+				+ (normalY / dyExperimental) ** 2
+			)
+
+			experimentalWidthPixels = max(
+				2,
+				int(np.ceil(physicalWidth / normalPixelSpacing)) + 1
+			)
+
+			offsetsNm = np.linspace(
+				-physicalWidth / 2,
+				physicalWidth / 2,
+				experimentalWidthPixels
+			)
+
+		def physicalToPixel(values, coordinates):
+			pixelIndices = np.arange(len(coordinates), dtype=float)
+
+			if coordinates[0] <= coordinates[-1]:
+				return np.interp(
+					values,
+					coordinates,
+					pixelIndices
+				)
+
+			return np.interp(
+				values,
+				coordinates[::-1],
+				pixelIndices[::-1]
+			)
+
+		xMin = float(np.min(xCoords))
+		xMax = float(np.max(xCoords))
+
+		yMin = float(np.min(yCoords))
+		yMax = float(np.max(yCoords))
+
+		profiles = []
+
+		for offsetNm in offsetsNm:
+			sampleXPhysical = xPhysical + offsetNm * normalX
+			sampleYPhysical = yPhysical + offsetNm * normalY
+
+			insideImage = (
+				(sampleXPhysical >= xMin)
+				& (sampleXPhysical <= xMax)
+				& (sampleYPhysical >= yMin)
+				& (sampleYPhysical <= yMax)
+			)
+
+			xPixels = physicalToPixel(sampleXPhysical, xCoords)
+			yPixels = physicalToPixel(sampleYPhysical, yCoords)
+
+			sampledProfile = map_coordinates(
+				image,
+				[yPixels, xPixels],
+				order=1,
+				mode="nearest"
+			)
+
+			# Do not fabricate data outside the experimental scan.
+			sampledProfile = np.asarray(sampledProfile, dtype=float)
+			sampledProfile[~insideImage] = np.nan
+
+			profiles.append(sampledProfile)
+
+		profiles = np.asarray(profiles, dtype=float)
+
+		validCounts = np.sum(np.isfinite(profiles), axis=0)
+		summedValues = np.nansum(profiles, axis=0)
+
+		profile = np.full(numberSamples, np.nan, dtype=float)
+
+		validMask = validCounts > 0
+
+		profile[validMask] = (
+			summedValues[validMask]
+			/ validCounts[validMask]
+		)
+
+		source = (
+			f"{self.experimental_data.channel} - "
+			f"{self.experimental_data.direction}"
+		)
+
+		return (
+			distance,
+			profile,
+			experimentalWidthPixels,
+			source
+		)
+
+
+	def calculateExperimentalLineProfile(self):
+		if self.line_profile_start is None:
+			return
+
+		if self.line_profile_end is None:
+			return
+
+		result = self.getExperimentalLineProfile(
+			self.line_profile_start,
+			self.line_profile_end,
+			self.line_profile_width_pixels
+		)
+
+		if result is None:
+			self.line_profile_experimental_distance = None
+			self.line_profile_experimental_values = None
+			self.line_profile_experimental_source = None
+			self.line_profile_experimental_width_pixels = None
+			return
+
+		(
+			self.line_profile_experimental_distance,
+			self.line_profile_experimental_values,
+			self.line_profile_experimental_width_pixels,
+			self.line_profile_experimental_source
+		) = result
+
+	def refreshExperimentalLineProfileData(self):
+		for profile in self.line_profiles:
+			result = self.getExperimentalLineProfile(
+				profile["start"],
+				profile["end"],
+				profile["width_pixels"]
+			)
+
+			if result is None:
+				profile["experimental_distance"] = None
+				profile["experimental_values"] = None
+				profile["experimental_source"] = None
+				profile["experimental_width_pixels"] = None
+
+				continue
+
+			(
+				profile["experimental_distance"],
+				profile["experimental_values"],
+				profile["experimental_width_pixels"],
+				profile["experimental_source"]
+			) = result
+
+		if (
+			self.active_line_profile_index is not None
+			and 0 <= self.active_line_profile_index < len(self.line_profiles)
+		):
+			profile = self.line_profiles[self.active_line_profile_index]
+
+			self.line_profile_experimental_distance = profile.get("experimental_distance")
+			self.line_profile_experimental_values = profile.get("experimental_values")
+			self.line_profile_experimental_source = profile.get("experimental_source")
+			self.line_profile_experimental_width_pixels = profile.get("experimental_width_pixels")
+
+		self.refreshOpenLineProfilePlot()
+
+
+	def normalizeLineProfileValues(self, values):
+		if values is None:
+			return None
+
+		values = np.asarray(values, dtype=float)
+
+		normalized = np.full(values.shape, np.nan, dtype=float)
+
+		finiteMask = np.isfinite(values)
+
+		if not np.any(finiteMask):
+			return normalized
+
+		minValue = np.min(values[finiteMask])
+		maxValue = np.max(values[finiteMask])
+
+		if maxValue > minValue:
+			normalized[finiteMask] = (
+				values[finiteMask] - minValue
+			) / (
+				maxValue - minValue
+			)
+
+		else:
+			normalized[finiteMask] = 0.0
+
+		return normalized
+
 	def showLineProfile(self):
 		if len(self.line_profiles) == 0:
 			return
@@ -3494,12 +4117,20 @@ class SimulatorWidget(QWidget):
 		axis = figure.add_subplot(111)
 
 		axis.set_xlabel("Distance along line (nm)")
-		axis.set_ylabel("Simulated topographic signal (arb. units)")
+
+		if self.comparison_mode and self.experimental_data is not None:
+			axis.set_ylabel("Normalized signal")
+		else:
+			axis.set_ylabel("Simulated topographic signal (arb. units)")
+
 		axis.set_title("Line profiles")
 
 		self.line_profile_plot_axis = axis
 		self.line_profile_plot_canvas = canvas
+
 		self.line_profile_plot_lines = {}
+		self.line_profile_plot_experimental_lines = {}
+
 		self.line_profile_plot_checkboxes = {}
 		self.line_profile_plot_temp_line = None
 
@@ -3591,6 +4222,14 @@ class SimulatorWidget(QWidget):
 			if line.get_visible()
 		]
 
+		visibleLines.extend(
+			[
+				line
+				for line in self.line_profile_plot_experimental_lines.values()
+				if line.get_visible()
+			]
+		)
+
 		# Include a new line that is currently being drawn.
 		if self.line_profile_plot_temp_line is not None:
 			if self.line_profile_plot_temp_line.get_visible():
@@ -3655,60 +4294,131 @@ class SimulatorWidget(QWidget):
 
 		profileNumber = profile["number"]
 
-		# if this profile already has a curve then just update it
+		comparisonActive = (
+			self.comparison_mode
+			and self.experimental_data is not None
+			and profile.get("experimental_values") is not None
+		)
+
+		simulationValues = profile["values"]
+
+		if comparisonActive:
+			simulationValues = self.normalizeLineProfileValues(simulationValues)
+
+		# if this simulation profile already has a curve then update it
 		existingLine = self.line_profile_plot_lines.get(profileNumber)
 
 		if existingLine is not None:
-			existingLine.set_data(profile["distance"], profile["values"])
-
-			if self.line_profile_plot_canvas is not None:
-				self.line_profile_plot_axis.relim()
-				self.line_profile_plot_axis.autoscale_view()
-				self.line_profile_plot_canvas.draw_idle()
-
-			return
-
-		visible = self.line_profile_plot_visibility.get(profileNumber, True)
-		self.line_profile_plot_visibility[profileNumber] = visible
-
-		# if this profile began as the temporary line being drawn then reuse that curve INSTEAD of creating another one
-		if self.line_profile_plot_temp_line is not None:
-			plotLine = self.line_profile_plot_temp_line
-			self.line_profile_plot_temp_line = None
-
-			plotLine.set_data(profile["distance"], profile["values"])
-			plotLine.set_color(profile["color"])
-			plotLine.set_label(f"Profile {profileNumber}")
-			plotLine.set_visible(visible)
-
-		else:
-			plotLine, = self.line_profile_plot_axis.plot(
+			existingLine.set_data(
 				profile["distance"],
-				profile["values"],
-				color=profile["color"],
-				linewidth=1.5,
-				label=f"Profile {profileNumber}",
-				visible=visible
+				simulationValues
 			)
 
-		self.line_profile_plot_lines[profileNumber] = plotLine
+			if comparisonActive:
+				existingLine.set_label(f"Simulation {profileNumber}")
+			else:
+				existingLine.set_label(f"Profile {profileNumber}")
 
-		checkbox = QCheckBox(f"Profile {profileNumber}", self.line_profile_plot_controls_box)
-		checkbox.setChecked(visible)
+		else:
+			visible = self.line_profile_plot_visibility.get(profileNumber, True)
+			self.line_profile_plot_visibility[profileNumber] = visible
 
-		checkbox.toggled.connect(
-			lambda checked, number=profileNumber:
-			self.setOpenLineProfileVisibility(number, checked)
-		)
+			# if this profile began as the temporary line being drawn then reuse that curve
+			if self.line_profile_plot_temp_line is not None:
+				plotLine = self.line_profile_plot_temp_line
+				self.line_profile_plot_temp_line = None
 
-		index = len(self.line_profile_plot_checkboxes)
+				plotLine.set_data(
+					profile["distance"],
+					simulationValues
+				)
 
-		row = index // 4
-		column = index % 4
+				plotLine.set_color(profile["color"])
 
-		self.line_profile_plot_checkbox_layout.addWidget(checkbox, row, column)
+				if comparisonActive:
+					plotLine.set_label(f"Simulation {profileNumber}")
+				else:
+					plotLine.set_label(f"Profile {profileNumber}")
 
-		self.line_profile_plot_checkboxes[profileNumber] = checkbox
+				plotLine.set_visible(visible)
+
+			else:
+				if comparisonActive:
+					label = f"Simulation {profileNumber}"
+				else:
+					label = f"Profile {profileNumber}"
+
+				plotLine, = self.line_profile_plot_axis.plot(
+					profile["distance"],
+					simulationValues,
+					color=profile["color"],
+					linewidth=1.5,
+					label=label,
+					visible=visible
+				)
+
+			self.line_profile_plot_lines[profileNumber] = plotLine
+
+		# add or update the experimental version of this same physical line
+		if comparisonActive:
+			experimentalDistance = profile.get("experimental_distance")
+			experimentalValues = self.normalizeLineProfileValues(
+				profile.get("experimental_values")
+			)
+
+			experimentalLine = self.line_profile_plot_experimental_lines.get(
+				profileNumber
+			)
+
+			if experimentalLine is None:
+				experimentalLine, = self.line_profile_plot_axis.plot(
+					experimentalDistance,
+					experimentalValues,
+					color=profile["color"],
+					linewidth=1.5,
+					linestyle="--",
+					label=f"Experimental {profileNumber}"
+				)
+
+				self.line_profile_plot_experimental_lines[profileNumber] = experimentalLine
+
+			else:
+				experimentalLine.set_data(
+					experimentalDistance,
+					experimentalValues
+				)
+
+				experimentalLine.set_color(profile["color"])
+				experimentalLine.set_label(f"Experimental {profileNumber}")
+
+		# create the existing profile checkbox once
+		if profileNumber not in self.line_profile_plot_checkboxes:
+			visible = self.line_profile_plot_visibility.get(profileNumber, True)
+
+			checkbox = QCheckBox(
+				f"Profile {profileNumber}",
+				self.line_profile_plot_controls_box
+			)
+
+			checkbox.setChecked(visible)
+
+			checkbox.toggled.connect(
+				lambda checked, number=profileNumber:
+				self.setOpenLineProfileVisibility(number, checked)
+			)
+
+			index = len(self.line_profile_plot_checkboxes)
+
+			row = index // 4
+			column = index % 4
+
+			self.line_profile_plot_checkbox_layout.addWidget(
+				checkbox,
+				row,
+				column
+			)
+
+			self.line_profile_plot_checkboxes[profileNumber] = checkbox
 
 		self.updateOpenLineProfileLegend()
 
@@ -3725,7 +4435,7 @@ class SimulatorWidget(QWidget):
 		if self.line_profile_plot_axis is None or self.line_profile_plot_checkbox_layout is None:
 			return
 
-		# Remove any temporary curve.
+		# remove any temporary curve
 		if self.line_profile_plot_temp_line is not None:
 			try:
 				self.line_profile_plot_temp_line.remove()
@@ -3734,7 +4444,7 @@ class SimulatorWidget(QWidget):
 
 			self.line_profile_plot_temp_line = None
 
-		# Remove the existing plotted curves.
+		# remove the existing plotted curves
 		for plotLine in list(self.line_profile_plot_lines.values()):
 			try:
 				plotLine.remove()
@@ -3743,14 +4453,22 @@ class SimulatorWidget(QWidget):
 
 		self.line_profile_plot_lines = {}
 
-		# Remove the existing profile checkboxes.
+		for plotLine in list(self.line_profile_plot_experimental_lines.values()):
+			try:
+				plotLine.remove()
+			except Exception:
+				pass
+
+		self.line_profile_plot_experimental_lines = {}
+
+		# remove the existing profile checkboxes
 		for checkbox in list(self.line_profile_plot_checkboxes.values()):
 			self.line_profile_plot_checkbox_layout.removeWidget(checkbox)
 			checkbox.deleteLater()
 
 		self.line_profile_plot_checkboxes = {}
 
-		# Re-add the currently stored profiles to the SAME popup.
+		# re-add the currently stored profiles to the SAME popup.
 		for profile in self.line_profiles:
 			self.addProfileToOpenLineProfilePlot(profile)
 
@@ -3826,7 +4544,31 @@ class SimulatorWidget(QWidget):
 		if plotLine is None:
 			return
 
-		plotLine.set_data(self.line_profile_distance, self.line_profile_values)
+		simulationValues = self.line_profile_values
+
+		if self.comparison_mode and self.experimental_data is not None:
+			simulationValues = self.normalizeLineProfileValues(simulationValues)
+
+		plotLine.set_data(
+			self.line_profile_distance,
+			simulationValues
+		)
+
+		experimentalLine = self.line_profile_plot_experimental_lines.get(
+			profileNumber
+		)
+
+		if (
+			experimentalLine is not None
+			and self.line_profile_experimental_distance is not None
+			and self.line_profile_experimental_values is not None
+		):
+			experimentalLine.set_data(
+				self.line_profile_experimental_distance,
+				self.normalizeLineProfileValues(
+					self.line_profile_experimental_values
+				)
+			)
 
 		self.line_profile_plot_axis.relim()
 		self.line_profile_plot_axis.autoscale_view()
@@ -3977,6 +4719,8 @@ class SimulatorWidget(QWidget):
 
 				self.line_profile_dialog = None
 
+			self.redrawExperimentalLineProfiles()
+
 			self.canvas.draw_idle()
 
 			return
@@ -3986,6 +4730,7 @@ class SimulatorWidget(QWidget):
 
 		self.activateLineProfile(newIndex)
 		self.refreshOpenLineProfilePlot()
+		self.redrawExperimentalLineProfiles()
 
 		self.canvas.draw_idle()
 		
@@ -4051,6 +4796,11 @@ class SimulatorWidget(QWidget):
 				pass
 
 			self.line_profile_dialog = None
+
+		self.clearExperimentalLineProfileArtists()
+
+		if hasattr(self, "experimental_canvas"):
+			self.experimental_canvas.draw_idle()
 
 		self.canvas.draw_idle()
 
@@ -6246,16 +6996,29 @@ class SimulatorWidget(QWidget):
 		self.figure = plt.figure(figsize=(10,10))
 
 		# Create a grid to plot mutiple plots on
-		self.grid = GridSpec(
-			nrows=1,
-			ncols=2,
-			wspace=0.50
-		)
+		self.grid = GridSpec(nrows=1, ncols=2, wspace=0.50)
 
 		groupbox = QGroupBox()
 
 		# creating a Vertical Box layout for storing widgets
 		vlayout = QVBoxLayout()
+
+		# tabs used only when comparing the simulation to experimental data
+		self.simulation_plot_tabs = QTabBar(self)
+		self.simulation_plot_tabs.addTab("Real space")
+		self.simulation_plot_tabs.addTab("FFT")
+		self.simulation_plot_tabs.setCurrentIndex(0)
+		self.simulation_plot_tabs.currentChanged.connect(self.updateSimulationPlotView)
+
+		# hide these during normal pyatoms use
+		self.simulation_plot_tabs.hide()
+
+		tabLayout = QHBoxLayout()
+		tabLayout.addStretch(1)
+		tabLayout.addWidget(self.simulation_plot_tabs)
+		tabLayout.addStretch(1)
+
+		vlayout.addLayout(tabLayout)
 
 		# this is the Canvas Widget that displays the 'figure'
 		# it takes the 'figure' instance as a parameter to __init__
@@ -6272,6 +7035,7 @@ class SimulatorWidget(QWidget):
 		# self.toolbar.setStyleSheet("background-color:magenta;")
 		# groupbox.setStyleSheet("background-color:magenta;")
 		# self.canvas.setStyleSheet("background-color:magenta;")
+
 		# adding tool bar to the layout
 		vlayout.addWidget(self.toolbar)
 
@@ -6285,6 +7049,43 @@ class SimulatorWidget(QWidget):
 		self.plotAtoms()
 
 		return groupbox
+
+	def updateSimulationPlotView(self, index=None):
+		if not hasattr(self, "ax_real") or not hasattr(self, "ax_fft"):
+			return
+
+		# normal mode: always show both plots
+		if not self.comparison_mode:
+			self.ax_real.set_visible(True)
+			self.ax_fft.set_visible(True)
+
+			if self.cb_r is not None:
+				self.cb_r.ax.set_visible(True)
+
+			if self.cb_k is not None:
+				self.cb_k.ax.set_visible(True)
+
+			if hasattr(self, "canvas"):
+				self.canvas.draw_idle()
+
+			return
+
+		if index is None:
+			index = self.simulation_plot_tabs.currentIndex()
+
+		showRealSpace = index == 0
+
+		self.ax_real.set_visible(showRealSpace)
+		self.ax_fft.set_visible(not showRealSpace)
+
+		if self.cb_r is not None:
+			self.cb_r.ax.set_visible(showRealSpace)
+
+		if self.cb_k is not None:
+			self.cb_k.ax.set_visible(not showRealSpace)
+
+		if hasattr(self, "canvas"):
+			self.canvas.draw_idle()
 
 	# COLORBAR FUNCTION TO FIX COLORBar issues. stolen from https://joseph-long.com/writing/colorbars/
 	# not using this in the gui anymore bc it caused issues. leaving it here for future reference only
@@ -6440,6 +7241,16 @@ class SimulatorWidget(QWidget):
 		# clearing old figure
 		self.figure.clear()
 
+		self.cb_r = None
+		self.cb_k = None
+
+		# normal pyatoms keeps the original side-by-side layout
+		# comparison mode stacks the two plots so tabs can switch between them
+		if self.comparison_mode:
+			self.grid = GridSpec(nrows=1, ncols=1)
+		else:
+			self.grid = GridSpec(nrows=1, ncols=2, wspace=0.50)
+
 		# old line-profile artists belonged to the axes that were just deleted
 		self.line_profile_artist = None
 		self.line_profile_start_artist = None
@@ -6484,7 +7295,11 @@ class SimulatorWidget(QWidget):
 
 		# keep references to the real space and FFT axes for interactive tools
 		self.ax_real = self.figure.add_subplot(self.grid[0, 0])
-		self.ax_fft = self.figure.add_subplot(self.grid[0, 1])
+
+		if self.comparison_mode:
+			self.ax_fft = self.figure.add_subplot(self.grid[0, 0])
+		else:
+			self.ax_fft = self.figure.add_subplot(self.grid[0, 1])
 
 
 		# Fix to correct for issue with Matplotlib version 3.5.1 creating cartoonishly large fonts
@@ -6533,8 +7348,8 @@ class SimulatorWidget(QWidget):
 		self.ax_real.set_yticks([])
 		self.ax_real.set_title('Real space image')
 		self.ax_real.grid(False)
-		cb_r = plt.colorbar(self.real_space_plot, ax=self.ax_real, fraction=0.046, pad=0.04) # fixed colorbar issues, from: https://stackoverflow.com/questions/16702479/matplotlib-colorbar-placement-and-size
-		cb_r.ax.tick_params(width=0.5)
+		self.cb_r = self.figure.colorbar(self.real_space_plot, ax=self.ax_real, fraction=0.046, pad=0.04)
+		self.cb_r.ax.tick_params(width=0.5)
 		# if Log mode is enabled for moire lattice, estimate best image range from histogram
 		if self.modeBtn == 'Log':
 			Zhist,bins = np.histogram(self.Z[:],self.pix//2,density=True)
@@ -6576,14 +7391,55 @@ class SimulatorWidget(QWidget):
 		# 	extR = (self.pix-1)*np.pi/self.L
 		
 
-		fig2 = self.ax_fft.imshow(self.fftZ, cmap = self.colormap_FFT, extent=[extL, extR, extL, extR],vmax = self.vmax_fft,origin='lower')		
+		if self.comparison_mode:
+			# none + linear reproduces the original FFT exactly
+			if (
+				self.comparison_fft_window == "None"
+				and self.comparison_fft_scale == "Linear"
+			):
+				fig2 = self.ax_fft.imshow(
+					self.fftZ,
+					cmap=self.colormap_FFT,
+					extent=[extL, extR, extL, extR],
+					vmax=self.vmax_fft,
+					origin="lower"
+				)
+
+			else:
+				# apply the selected comparison FFT processing
+				simulationDx = self.L / self.pix
+				simulationDy = self.L / self.pix
+
+				simulationFFTDisplay, simulationFFTExtent = self.calculateComparisonFFTDisplay(
+					self.Z,
+					simulationDx,
+					simulationDy
+				)
+
+				fig2 = self.ax_fft.imshow(
+					simulationFFTDisplay,
+					cmap=self.colormap_FFT,
+					extent=simulationFFTExtent,
+					origin="lower",
+					vmin=0.0,
+					vmax=self.vmax_fft
+				)
+		else:
+			# normal PyAtoms behavior remains unchanged
+			fig2 = self.ax_fft.imshow(
+				self.fftZ,
+				cmap=self.colormap_FFT,
+				extent=[extL, extR, extL, extR],
+				vmax=self.vmax_fft,
+				origin="lower"
+			)	
 		self.ax_fft.set_xlabel('$k_x$ (nm⁻¹)')
 		self.ax_fft.set_ylabel('$k_y$ (nm⁻¹)')#20) 
 		self.ax_fft.set_title('FFT')
 		self.ax_fft.grid(False)
 
-		cb_k = plt.colorbar(fig2, ax=self.ax_fft, fraction=0.046, pad=0.04)
-		cb_k.ax.tick_params(width=0.5)
+		self.cb_k = self.figure.colorbar(fig2, ax=self.ax_fft, fraction=0.046, pad=0.04)
+		self.cb_k.ax.tick_params(width=0.5)
 		# plt.tight_layout()
 
 		if self.filter_bool == True and self.sigma != 0:
@@ -6618,8 +7474,8 @@ class SimulatorWidget(QWidget):
 			self.ax_real.tick_params(labelsize=5)
 			self.ax_fft.xaxis.set_tick_params(width=0.5)
 			self.ax_fft.yaxis.set_tick_params(width=0.5)
-			cb_r.ax.tick_params(width=0.5)
-			cb_k.ax.tick_params(width=0.5)
+			self.cb_r.ax.tick_params(width=0.5)
+			self.cb_k.ax.tick_params(width=0.5)
 			# plt.tight_layout(pad=0.5,w_pad = 1,h_pad=1) # nothing workd :( 
 
 			for axis in ['top','bottom','left','right']:
@@ -6639,6 +7495,7 @@ class SimulatorWidget(QWidget):
 		if len(self.line_profiles) > 0:
 			self.redrawAllLineProfiles()
 
+		self.updateSimulationPlotView()
 		self.canvas.draw()
 
 

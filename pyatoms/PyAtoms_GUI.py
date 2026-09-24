@@ -375,7 +375,7 @@ class Window(QMainWindow):
         comparisonPlotLayout.setSpacing(6)
 
         comparisonPlotLayout.addWidget(experimentalPlotWidget, 1)
-        comparisonPlotLayout.addWidget(plotWidget, 2)
+        comparisonPlotLayout.addWidget(plotWidget, 1)
 
         # right side -> draggable divider between the scrollable controls and teh expanding matplotlib figure
         self.rightSplitter = QSplitter(Qt.Vertical)
