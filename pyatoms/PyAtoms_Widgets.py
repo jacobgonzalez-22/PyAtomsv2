@@ -626,63 +626,66 @@ class SimulatorWidget(QWidget):
 		self.experimental_status_label = QLabel("No experimental data loaded.")
 		self.experimental_status_label.setWordWrap(True)
 
-		# channel selection
-		channelLayout = QHBoxLayout()
+		# experimental data controls
+		controlsLayout = QGridLayout()
+		controlsLayout.setHorizontalSpacing(12)
+		controlsLayout.setVerticalSpacing(6)
 
+		# channel
 		channelLabel = QLabel("Channel:")
 
 		self.experimental_channel_dropdown = QComboBox(self)
 		self.experimental_channel_dropdown.setEnabled(False)
 		self.experimental_channel_dropdown.currentTextChanged.connect(self.updateExperimentalSelection)
 
-		channelLayout.addWidget(channelLabel)
-		channelLayout.addWidget(self.experimental_channel_dropdown)
-		channelLayout.addStretch(1)
-
-		# scan direction selection
-		directionLayout = QHBoxLayout()
-
+		# scan direction
 		directionLabel = QLabel("Direction:")
 
 		self.experimental_direction_dropdown = QComboBox(self)
 		self.experimental_direction_dropdown.setEnabled(False)
 		self.experimental_direction_dropdown.currentTextChanged.connect(self.updateExperimentalSelection)
 
-		directionLayout.addWidget(directionLabel)
-		directionLayout.addWidget(self.experimental_direction_dropdown)
-		directionLayout.addStretch(1)
+		# global leveling
+		levelingLabel = QLabel("Leveling:")
 
-		# preprocessing selection
-		processingLayout = QHBoxLayout()
+		self.experimental_leveling_dropdown = QComboBox(self)
+		self.experimental_leveling_dropdown.addItems(["None", "Mean", "Plane"])
+		self.experimental_leveling_dropdown.setCurrentText("None")
+		self.experimental_leveling_dropdown.setEnabled(False)
+		self.experimental_leveling_dropdown.currentTextChanged.connect(self.updateExperimentalProcessing)
 
-		processingLabel = QLabel("Processing:")
+		# line-by-line flattening
+		lineFlattenLabel = QLabel("Line flattening:")
 
-		self.experimental_processing_dropdown = QComboBox(self)
-		self.experimental_processing_dropdown.addItems(
-			[
-				"Raw",
-				"Subtract mean",
-				"Subtract plane",
-				"Line flatten - mean",
-				"Line flatten - linear"
-			]
-		)
+		self.experimental_line_flatten_dropdown = QComboBox(self)
+		self.experimental_line_flatten_dropdown.addItems(["None", "Mean", "Median", "Linear"])
+		self.experimental_line_flatten_dropdown.setCurrentText("None")
+		self.experimental_line_flatten_dropdown.setEnabled(False)
+		self.experimental_line_flatten_dropdown.currentTextChanged.connect(self.updateExperimentalProcessing)
 
-		self.experimental_processing_dropdown.setCurrentText("Raw")
-		self.experimental_processing_dropdown.setEnabled(False)
-		self.experimental_processing_dropdown.currentTextChanged.connect(self.updateExperimentalProcessing)
+		# row 1
+		controlsLayout.addWidget(channelLabel, 0, 0)
+		controlsLayout.addWidget(self.experimental_channel_dropdown, 0, 1)
 
-		processingLayout.addWidget(processingLabel)
-		processingLayout.addWidget(self.experimental_processing_dropdown)
-		processingLayout.addStretch(1)
+		controlsLayout.addWidget(directionLabel, 0, 2)
+		controlsLayout.addWidget(self.experimental_direction_dropdown, 0, 3)
+
+		# row 2
+		controlsLayout.addWidget(levelingLabel, 1, 0)
+		controlsLayout.addWidget(self.experimental_leveling_dropdown, 1, 1)
+
+		controlsLayout.addWidget(lineFlattenLabel, 1, 2)
+		controlsLayout.addWidget(self.experimental_line_flatten_dropdown, 1, 3)
+
+		# let the dropdown columns take the available width
+		controlsLayout.setColumnStretch(1, 1)
+		controlsLayout.setColumnStretch(3, 1)
 
 		layout.addWidget(description)
 		layout.addWidget(self.experimental_import_btn)
 		layout.addWidget(self.experimental_status_label)
 		layout.addSpacing(4)
-		layout.addLayout(channelLayout)
-		layout.addLayout(directionLayout)
-		layout.addLayout(processingLayout)
+		layout.addLayout(controlsLayout)
 		layout.addStretch(1)
 
 		groupBox.setLayout(layout)
@@ -758,10 +761,17 @@ class SimulatorWidget(QWidget):
 		self.experimental_channel_dropdown.setEnabled(True)
 		self.experimental_direction_dropdown.setEnabled(True)
 
-		self.experimental_processing_dropdown.blockSignals(True)
-		self.experimental_processing_dropdown.setCurrentText("Raw")
-		self.experimental_processing_dropdown.blockSignals(False)
-		self.experimental_processing_dropdown.setEnabled(True)
+		self.experimental_leveling_dropdown.blockSignals(True)
+		self.experimental_line_flatten_dropdown.blockSignals(True)
+
+		self.experimental_leveling_dropdown.setCurrentText("None")
+		self.experimental_line_flatten_dropdown.setCurrentText("None")
+
+		self.experimental_leveling_dropdown.blockSignals(False)
+		self.experimental_line_flatten_dropdown.blockSignals(False)
+
+		self.experimental_leveling_dropdown.setEnabled(True)
+		self.experimental_line_flatten_dropdown.setEnabled(True)
 
 		self.experimental_status_label.setText(
 			f"{experimentalData.file_name}\n"
@@ -785,11 +795,12 @@ class SimulatorWidget(QWidget):
 		if channel == "" or direction == "":
 			return
 
+		leveling = self.experimental_leveling_dropdown.currentText()
+		lineFlattening = self.experimental_line_flatten_dropdown.currentText()
+
 		try:
 			self.experimental_data.load_channel(channel, direction)
-
-			processing = self.experimental_processing_dropdown.currentText()
-			self.experimental_data.apply_processing(processing)
+			self.experimental_data.apply_processing(leveling, lineFlattening)
 
 		except Exception as error:
 			QMessageBox.critical(
@@ -805,13 +816,14 @@ class SimulatorWidget(QWidget):
 		if self.experimental_data is None:
 			return
 
-		processing = self.experimental_processing_dropdown.currentText()
+		leveling = self.experimental_leveling_dropdown.currentText()
+		lineFlattening = self.experimental_line_flatten_dropdown.currentText()
 
-		if processing == "":
+		if leveling == "" or lineFlattening == "":
 			return
 
 		try:
-			self.experimental_data.apply_processing(processing)
+			self.experimental_data.apply_processing(leveling, lineFlattening)
 
 		except Exception as error:
 			QMessageBox.critical(

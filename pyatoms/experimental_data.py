@@ -35,7 +35,9 @@ class ExperimentalData:
 
         self.raw = None
         self.processed = None
-        self.processing = "Raw"
+
+        self.leveling = "None"
+        self.line_flattening = "None"
 
         self.x_nm = np.asarray(self.dataset["x"].values, dtype=float) * 1e9
         self.y_nm = np.asarray(self.dataset["y"].values, dtype=float) * 1e9
@@ -71,36 +73,34 @@ class ExperimentalData:
         # load raw data
         self.raw = np.asarray(data.values, dtype=float).copy()
 
-        # processed data can be defined as needed -> for now just copy the raw data
+        # start from the unprocessed channel data
         self.processed = self.raw.copy()
-        self.processing = "Raw"
 
         return self.processed
 
-    def apply_processing(self, mode="Raw"):
+    def apply_processing(self, leveling="None", line_flattening="None"):
         if self.raw is None:
             return None
 
-        raw = np.asarray(self.raw, dtype=float)
+        # always restart from the original experimental data
+        processed = np.asarray(self.raw, dtype=float).copy()
 
-        if mode == "Raw":
-            processed = raw.copy()
+        # global leveling
+        if leveling == "None":
+            pass
 
-        elif mode == "Subtract mean":
-            if np.any(np.isfinite(raw)):
-                processed = raw - np.nanmean(raw)
-            else:
-                processed = raw.copy()
+        elif leveling == "Mean":
+            finiteMask = np.isfinite(processed)
 
-        elif mode == "Subtract plane":
+            if np.any(finiteMask):
+                processed = processed - np.mean(processed[finiteMask])
+
+        elif leveling == "Plane":
             X, Y = np.meshgrid(self.x_display_nm, self.y_display_nm)
 
-            finiteMask = np.isfinite(raw)
+            finiteMask = np.isfinite(processed)
 
-            if np.count_nonzero(finiteMask) < 3:
-                processed = raw.copy()
-
-            else:
+            if np.count_nonzero(finiteMask) >= 3:
                 A = np.column_stack(
                     (
                         X[finiteMask],
@@ -109,36 +109,43 @@ class ExperimentalData:
                     )
                 )
 
-                coefficients, _, _, _ = np.linalg.lstsq(
-                    A,
-                    raw[finiteMask],
-                    rcond=None
-                )
+                coefficients, _, _, _ = np.linalg.lstsq(A, processed[finiteMask], rcond=None)
 
                 a, b, c = coefficients
-
                 plane = a * X + b * Y + c
 
-                processed = raw - plane
+                processed = processed - plane
 
-        elif mode == "Line flatten - mean":
-            processed = raw.copy()
+        else:
+            raise ValueError(f"Unknown leveling mode: {leveling}")
 
-            for rowIndex in range(raw.shape[0]):
-                row = raw[rowIndex, :]
+        # line-by-line flattening
+        if line_flattening == "None":
+            pass
+
+        elif line_flattening == "Mean":
+            for rowIndex in range(processed.shape[0]):
+                row = processed[rowIndex, :]
                 finiteMask = np.isfinite(row)
 
                 if np.any(finiteMask):
                     rowMean = np.mean(row[finiteMask])
                     processed[rowIndex, finiteMask] = row[finiteMask] - rowMean
 
+        elif line_flattening == "Median":
+            for rowIndex in range(processed.shape[0]):
+                row = processed[rowIndex, :]
+                finiteMask = np.isfinite(row)
 
-        elif mode == "Line flatten - linear":
-            processed = raw.copy()
+                if np.any(finiteMask):
+                    rowMedian = np.median(row[finiteMask])
+                    processed[rowIndex, finiteMask] = row[finiteMask] - rowMedian
+
+        elif line_flattening == "Linear":
             x = self.x_display_nm
 
-            for rowIndex in range(raw.shape[0]):
-                row = raw[rowIndex, :]
+            for rowIndex in range(processed.shape[0]):
+                row = processed[rowIndex, :]
                 finiteMask = np.isfinite(row)
 
                 if np.count_nonzero(finiteMask) < 2:
@@ -151,23 +158,18 @@ class ExperimentalData:
                     )
                 )
 
-                coefficients, _, _, _ = np.linalg.lstsq(
-                    A,
-                    row[finiteMask],
-                    rcond=None
-                )
+                coefficients, _, _, _ = np.linalg.lstsq(A, row[finiteMask], rcond=None)
 
                 slope, offset = coefficients
                 lineBackground = slope * x + offset
 
-                processed[rowIndex, finiteMask] = (
-                    row[finiteMask] - lineBackground[finiteMask]
-			)
+                processed[rowIndex, finiteMask] = row[finiteMask] - lineBackground[finiteMask]
 
         else:
-            raise ValueError(f"Unknown processing mode: {mode}")
+            raise ValueError(f"Unknown line flattening mode: {line_flattening}")
 
-        self.processing = mode
+        self.leveling = leveling
+        self.line_flattening = line_flattening
         self.processed = processed
 
         return self.processed
@@ -177,6 +179,8 @@ class ExperimentalData:
             return
 
         self.processed = self.raw.copy()
+        self.leveling = "None"
+        self.line_flattening = "None"
 
     def get_extent(self):
         return [
