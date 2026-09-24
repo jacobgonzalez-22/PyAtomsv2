@@ -35,6 +35,7 @@ class ExperimentalData:
 
         self.raw = None
         self.processed = None
+        self.processing = "Raw"
 
         self.x_nm = np.asarray(self.dataset["x"].values, dtype=float) * 1e9
         self.y_nm = np.asarray(self.dataset["y"].values, dtype=float) * 1e9
@@ -72,6 +73,102 @@ class ExperimentalData:
 
         # processed data can be defined as needed -> for now just copy the raw data
         self.processed = self.raw.copy()
+        self.processing = "Raw"
+
+        return self.processed
+
+    def apply_processing(self, mode="Raw"):
+        if self.raw is None:
+            return None
+
+        raw = np.asarray(self.raw, dtype=float)
+
+        if mode == "Raw":
+            processed = raw.copy()
+
+        elif mode == "Subtract mean":
+            if np.any(np.isfinite(raw)):
+                processed = raw - np.nanmean(raw)
+            else:
+                processed = raw.copy()
+
+        elif mode == "Subtract plane":
+            X, Y = np.meshgrid(self.x_display_nm, self.y_display_nm)
+
+            finiteMask = np.isfinite(raw)
+
+            if np.count_nonzero(finiteMask) < 3:
+                processed = raw.copy()
+
+            else:
+                A = np.column_stack(
+                    (
+                        X[finiteMask],
+                        Y[finiteMask],
+                        np.ones(np.count_nonzero(finiteMask))
+                    )
+                )
+
+                coefficients, _, _, _ = np.linalg.lstsq(
+                    A,
+                    raw[finiteMask],
+                    rcond=None
+                )
+
+                a, b, c = coefficients
+
+                plane = a * X + b * Y + c
+
+                processed = raw - plane
+
+        elif mode == "Line flatten - mean":
+            processed = raw.copy()
+
+            for rowIndex in range(raw.shape[0]):
+                row = raw[rowIndex, :]
+                finiteMask = np.isfinite(row)
+
+                if np.any(finiteMask):
+                    rowMean = np.mean(row[finiteMask])
+                    processed[rowIndex, finiteMask] = row[finiteMask] - rowMean
+
+
+        elif mode == "Line flatten - linear":
+            processed = raw.copy()
+            x = self.x_display_nm
+
+            for rowIndex in range(raw.shape[0]):
+                row = raw[rowIndex, :]
+                finiteMask = np.isfinite(row)
+
+                if np.count_nonzero(finiteMask) < 2:
+                    continue
+
+                A = np.column_stack(
+                    (
+                        x[finiteMask],
+                        np.ones(np.count_nonzero(finiteMask))
+                    )
+                )
+
+                coefficients, _, _, _ = np.linalg.lstsq(
+                    A,
+                    row[finiteMask],
+                    rcond=None
+                )
+
+                slope, offset = coefficients
+                lineBackground = slope * x + offset
+
+                processed[rowIndex, finiteMask] = (
+                    row[finiteMask] - lineBackground[finiteMask]
+			)
+
+        else:
+            raise ValueError(f"Unknown processing mode: {mode}")
+
+        self.processing = mode
+        self.processed = processed
 
         return self.processed
 

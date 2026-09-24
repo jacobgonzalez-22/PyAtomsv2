@@ -364,6 +364,9 @@ class Window(QMainWindow):
         self.SimWidget.experimental_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.SimWidget.experimental_canvas.setMinimumSize(0, 0)
 
+        self.SimWidget.experimental_fft_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.SimWidget.experimental_fft_canvas.setMinimumSize(0, 0)
+
         # comparison workspace
         self.comparisonPlotWidget = QWidget()
 

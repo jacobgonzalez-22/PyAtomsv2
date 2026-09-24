@@ -652,12 +652,37 @@ class SimulatorWidget(QWidget):
 		directionLayout.addWidget(self.experimental_direction_dropdown)
 		directionLayout.addStretch(1)
 
+		# preprocessing selection
+		processingLayout = QHBoxLayout()
+
+		processingLabel = QLabel("Processing:")
+
+		self.experimental_processing_dropdown = QComboBox(self)
+		self.experimental_processing_dropdown.addItems(
+			[
+				"Raw",
+				"Subtract mean",
+				"Subtract plane",
+				"Line flatten - mean",
+				"Line flatten - linear"
+			]
+		)
+
+		self.experimental_processing_dropdown.setCurrentText("Raw")
+		self.experimental_processing_dropdown.setEnabled(False)
+		self.experimental_processing_dropdown.currentTextChanged.connect(self.updateExperimentalProcessing)
+
+		processingLayout.addWidget(processingLabel)
+		processingLayout.addWidget(self.experimental_processing_dropdown)
+		processingLayout.addStretch(1)
+
 		layout.addWidget(description)
 		layout.addWidget(self.experimental_import_btn)
 		layout.addWidget(self.experimental_status_label)
 		layout.addSpacing(4)
 		layout.addLayout(channelLayout)
 		layout.addLayout(directionLayout)
+		layout.addLayout(processingLayout)
 		layout.addStretch(1)
 
 		groupBox.setLayout(layout)
@@ -733,6 +758,11 @@ class SimulatorWidget(QWidget):
 		self.experimental_channel_dropdown.setEnabled(True)
 		self.experimental_direction_dropdown.setEnabled(True)
 
+		self.experimental_processing_dropdown.blockSignals(True)
+		self.experimental_processing_dropdown.setCurrentText("Raw")
+		self.experimental_processing_dropdown.blockSignals(False)
+		self.experimental_processing_dropdown.setEnabled(True)
+
 		self.experimental_status_label.setText(
 			f"{experimentalData.file_name}\n"
 			f"{experimentalData.nx} x {experimentalData.ny} pixels    "
@@ -758,6 +788,9 @@ class SimulatorWidget(QWidget):
 		try:
 			self.experimental_data.load_channel(channel, direction)
 
+			processing = self.experimental_processing_dropdown.currentText()
+			self.experimental_data.apply_processing(processing)
+
 		except Exception as error:
 			QMessageBox.critical(
 				self,
@@ -768,18 +801,66 @@ class SimulatorWidget(QWidget):
 
 		self.updateExperimentalPlot()
 
-	def initExperimentalMatplotlibFig(self):
-		self.experimental_figure = plt.figure(figsize=(5, 5))
-		self.experimental_canvas = FigureCanvas(self.experimental_figure)
-		self.experimental_toolbar = NavigationToolbar(self.experimental_canvas, self)
+	def updateExperimentalProcessing(self):
+		if self.experimental_data is None:
+			return
 
+		processing = self.experimental_processing_dropdown.currentText()
+
+		if processing == "":
+			return
+
+		try:
+			self.experimental_data.apply_processing(processing)
+
+		except Exception as error:
+			QMessageBox.critical(
+				self,
+				"Experimental processing error",
+				"The experimental data could not be processed.\n\n" + str(error)
+			)
+			return
+
+		self.updateExperimentalPlot()
+
+	def initExperimentalMatplotlibFig(self):
 		groupBox = QGroupBox("Experimental")
 
-		layout = QVBoxLayout()
-		layout.addWidget(self.experimental_toolbar)
-		layout.addWidget(self.experimental_canvas)
+		mainLayout = QVBoxLayout()
+		mainLayout.setContentsMargins(4, 4, 4, 4)
 
-		groupBox.setLayout(layout)
+		self.experimental_plot_tabs = QTabWidget(self)
+
+		# real-space tab
+		realSpacePage = QWidget()
+		realSpaceLayout = QVBoxLayout(realSpacePage)
+		realSpaceLayout.setContentsMargins(0, 0, 0, 0)
+
+		self.experimental_figure = plt.Figure(figsize=(5, 5))
+		self.experimental_canvas = FigureCanvas(self.experimental_figure)
+		self.experimental_toolbar = NavigationToolbar(self.experimental_canvas, realSpacePage)
+
+		realSpaceLayout.addWidget(self.experimental_toolbar)
+		realSpaceLayout.addWidget(self.experimental_canvas)
+
+		# FFT tab
+		fftPage = QWidget()
+		fftLayout = QVBoxLayout(fftPage)
+		fftLayout.setContentsMargins(0, 0, 0, 0)
+
+		self.experimental_fft_figure = plt.Figure(figsize=(5, 5))
+		self.experimental_fft_canvas = FigureCanvas(self.experimental_fft_figure)
+		self.experimental_fft_toolbar = NavigationToolbar(self.experimental_fft_canvas, fftPage)
+
+		fftLayout.addWidget(self.experimental_fft_toolbar)
+		fftLayout.addWidget(self.experimental_fft_canvas)
+
+		self.experimental_plot_tabs.addTab(realSpacePage, "Real space")
+		self.experimental_plot_tabs.addTab(fftPage, "FFT")
+
+		mainLayout.addWidget(self.experimental_plot_tabs)
+
+		groupBox.setLayout(mainLayout)
 
 		self.experimental_plot_widget = groupBox
 
@@ -796,11 +877,12 @@ class SimulatorWidget(QWidget):
 		if not hasattr(self, "experimental_figure"):
 			return
 
+		image = np.asarray(self.experimental_data.processed, dtype=float)
+
+		# real-space image
 		self.experimental_figure.clear()
 
 		self.experimental_ax = self.experimental_figure.add_subplot(111)
-
-		image = np.asarray(self.experimental_data.processed, dtype=float)
 
 		self.experimental_image_plot = self.experimental_ax.imshow(
 			image,
@@ -819,16 +901,98 @@ class SimulatorWidget(QWidget):
 
 		self.experimental_ax.grid(False)
 
-		colorbar = self.experimental_figure.colorbar(
+		realColorbar = self.experimental_figure.colorbar(
 			self.experimental_image_plot,
 			ax=self.experimental_ax,
 			fraction=0.046,
 			pad=0.04
 		)
 
-		colorbar.ax.tick_params(width=0.5)
+		realColorbar.ax.tick_params(width=0.5)
+
+		# FFT
+		self.experimental_fft_figure.clear()
+		self.experimental_fft_ax = self.experimental_fft_figure.add_subplot(111)
+
+		ny, nx = image.shape
+
+		# replace invalid pixels and remove the DC offset
+		finiteMask = np.isfinite(image)
+
+		if np.any(finiteMask):
+			imageMean = np.mean(image[finiteMask])
+			fftInput = np.nan_to_num(image - imageMean, nan=0.0, posinf=0.0, neginf=0.0)
+
+		else:
+			fftInput = np.zeros_like(image)
+
+		# reduce edge discontinuities before taking the FFT
+		windowX = np.hanning(nx)
+		windowY = np.hanning(ny)
+		window2D = np.outer(windowY, windowX)
+
+		fftInput = fftInput * window2D
+
+		fftComplex = np.fft.fftshift(np.fft.fft2(fftInput))
+		fftMagnitude = np.abs(fftComplex)
+
+		# log scaling makes weaker reciprocal-space peaks visible.
+		fftLog = np.log1p(fftMagnitude)
+
+		# too strong normalization prevents a few intense low-k pixels from controlling the entire displayed contrast
+		displayMin = np.percentile(fftLog, 70.0)
+		displayMax = np.percentile(fftLog, 99.9)
+
+		if displayMax > displayMin:
+			fftDisplay = (fftLog - displayMin) / (displayMax - displayMin)
+			fftDisplay = np.clip(fftDisplay, 0.0, 1.0)
+
+		else:
+			fftDisplay = np.zeros_like(fftLog)
+
+		# k-space coordinates from the native SXM pixel spacing
+		dx = abs(float(np.mean(np.diff(self.experimental_data.x_nm))))
+		dy = abs(float(np.mean(np.diff(self.experimental_data.y_nm))))
+
+		kx = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(nx, d=dx))
+		ky = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(ny, d=dy))
+
+		dkx = abs(kx[1] - kx[0])
+		dky = abs(ky[1] - ky[0])
+
+		fftExtent = [
+			kx[0] - dkx / 2,
+			kx[-1] + dkx / 2,
+			ky[0] - dky / 2,
+			ky[-1] + dky / 2
+		]
+
+		self.experimental_fft_plot = self.experimental_fft_ax.imshow(
+			fftDisplay,
+			cmap=self.colormap_FFT,
+			extent=fftExtent,
+			origin="lower",
+			aspect="equal",
+			vmin=0.0,
+			vmax=1.0
+		)
+
+		self.experimental_fft_ax.set_xlabel("$k_x$ (nm⁻¹)")
+		self.experimental_fft_ax.set_ylabel("$k_y$ (nm⁻¹)")
+		self.experimental_fft_ax.set_title("FFT - Hann window, log scale")
+		self.experimental_fft_ax.grid(False)
+
+		fftColorbar = self.experimental_fft_figure.colorbar(
+			self.experimental_fft_plot,
+			ax=self.experimental_fft_ax,
+			fraction=0.046,
+			pad=0.04
+		)
+
+		fftColorbar.ax.tick_params(width=0.5)
 
 		self.experimental_canvas.draw_idle()
+		self.experimental_fft_canvas.draw_idle()
 
 		if hasattr(self, "experimental_plot_widget"):
 			self.experimental_plot_widget.show()
@@ -6221,9 +6385,6 @@ class SimulatorWidget(QWidget):
 
 		self.plotAtoms()
 
-		if self.experimental_data is not None:
-			self.updateExperimentalPlot()
-
 		self.harry_counter += 1
 		self.updateHarryCounter()
 
@@ -6234,6 +6395,10 @@ class SimulatorWidget(QWidget):
 			self.vmax_fft = eval(self.vmax_fft_input.text()) 
 			self.vmax_fft_input.setPlaceholderText(str(self.vmax_fft))
 			self.plotAtoms() 
+
+			if self.experimental_data is not None:
+				self.updateExperimentalPlot()
+
 			self.harry_counter += 1
 			self.updateHarryCounter()
 		except:
