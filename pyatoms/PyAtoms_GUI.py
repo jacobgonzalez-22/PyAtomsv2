@@ -122,6 +122,11 @@ class Window(QMainWindow):
         # create matplotlib last because initmatplotlibfig() immediately calls plotatoms which controls the initialized things above
         plotWidget = self.SimWidget.initMatplotlibFig()
 
+        experimentalPlotWidget = self.SimWidget.initExperimentalMatplotlibFig()
+
+        plotWidget.setTitle("Simulation")
+        experimentalPlotWidget.hide()
+
         # keep the lattice panels consistent without forcing the whole window to be tall enough to display all three at once
         latticeHeight = 280
         lattice1Widget.setFixedHeight(latticeHeight)
@@ -346,18 +351,35 @@ class Window(QMainWindow):
         self.topControlsPreferredHeight = self.topControlsContainer.sizeHint().height() + horizontalBarHeight + 16
         self.topControlsScrollArea.setMaximumHeight(self.topControlsPreferredHeight)
 
-        # matplotlib stays outside both scroll areas so its toolbar, zooming, etc are unaffected
+       # matplotlib stays outside both scroll areas so its toolbar, zooming, etc are unaffected
         plotWidget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         plotWidget.setMinimumSize(0, 220)
+
         self.SimWidget.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.SimWidget.canvas.setMinimumSize(0, 0)
+
+        experimentalPlotWidget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        experimentalPlotWidget.setMinimumSize(0, 220)
+
+        self.SimWidget.experimental_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.SimWidget.experimental_canvas.setMinimumSize(0, 0)
+
+        # comparison workspace
+        self.comparisonPlotWidget = QWidget()
+
+        comparisonPlotLayout = QHBoxLayout(self.comparisonPlotWidget)
+        comparisonPlotLayout.setContentsMargins(0, 0, 0, 0)
+        comparisonPlotLayout.setSpacing(6)
+
+        comparisonPlotLayout.addWidget(experimentalPlotWidget, 1)
+        comparisonPlotLayout.addWidget(plotWidget, 2)
 
         # right side -> draggable divider between the scrollable controls and teh expanding matplotlib figure
         self.rightSplitter = QSplitter(Qt.Vertical)
         self.rightSplitter.setChildrenCollapsible(False)
         self.rightSplitter.setHandleWidth(6)
         self.rightSplitter.addWidget(self.topControlsScrollArea)
-        self.rightSplitter.addWidget(plotWidget)
+        self.rightSplitter.addWidget(self.comparisonPlotWidget)
 
         # both sections share added height when the wndow is enlarged (until the controls reach their max height)
         self.rightSplitter.setStretchFactor(0, 1)

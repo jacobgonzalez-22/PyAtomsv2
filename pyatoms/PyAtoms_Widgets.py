@@ -741,6 +741,8 @@ class SimulatorWidget(QWidget):
 
 		self.experimental_status_label.setToolTip(filePath)
 
+		self.updateExperimentalPlot()
+
 		return True
 
 	def updateExperimentalSelection(self):
@@ -763,6 +765,73 @@ class SimulatorWidget(QWidget):
 				"The selected experimental data could not be loaded.\n\n" + str(error)
 			)
 			return
+
+		self.updateExperimentalPlot()
+
+	def initExperimentalMatplotlibFig(self):
+		self.experimental_figure = plt.figure(figsize=(5, 5))
+		self.experimental_canvas = FigureCanvas(self.experimental_figure)
+		self.experimental_toolbar = NavigationToolbar(self.experimental_canvas, self)
+
+		groupBox = QGroupBox("Experimental")
+
+		layout = QVBoxLayout()
+		layout.addWidget(self.experimental_toolbar)
+		layout.addWidget(self.experimental_canvas)
+
+		groupBox.setLayout(layout)
+
+		self.experimental_plot_widget = groupBox
+
+		return groupBox
+
+
+	def updateExperimentalPlot(self):
+		if self.experimental_data is None:
+			return
+
+		if self.experimental_data.processed is None:
+			return
+
+		if not hasattr(self, "experimental_figure"):
+			return
+
+		self.experimental_figure.clear()
+
+		self.experimental_ax = self.experimental_figure.add_subplot(111)
+
+		image = np.asarray(self.experimental_data.processed, dtype=float)
+
+		self.experimental_image_plot = self.experimental_ax.imshow(
+			image,
+			cmap=self.colormap_RS,
+			extent=self.experimental_data.get_extent(),
+			origin="lower",
+			aspect="equal"
+		)
+
+		self.experimental_ax.set_xlabel("x (nm)")
+		self.experimental_ax.set_ylabel("y (nm)")
+
+		self.experimental_ax.set_title(
+			f"{self.experimental_data.channel} - {self.experimental_data.direction}"
+		)
+
+		self.experimental_ax.grid(False)
+
+		colorbar = self.experimental_figure.colorbar(
+			self.experimental_image_plot,
+			ax=self.experimental_ax,
+			fraction=0.046,
+			pad=0.04
+		)
+
+		colorbar.ax.tick_params(width=0.5)
+
+		self.experimental_canvas.draw_idle()
+
+		if hasattr(self, "experimental_plot_widget"):
+			self.experimental_plot_widget.show()
 
 	def initImageParameters(self):
 		groupBox = QGroupBox("Image parameters")
@@ -6149,7 +6218,12 @@ class SimulatorWidget(QWidget):
 		# This updates the value of colormap whenever its changed and so when you click the buttoon it updates the plot to the selected value from dropdown list
 		self.colormap_RS = self.dropdownColormap_RS.currentText()
 		self.colormap_FFT = self.dropdownColormap_FFT.currentText()
+
 		self.plotAtoms()
+
+		if self.experimental_data is not None:
+			self.updateExperimentalPlot()
+
 		self.harry_counter += 1
 		self.updateHarryCounter()
 
