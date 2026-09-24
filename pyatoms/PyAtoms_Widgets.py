@@ -626,9 +626,38 @@ class SimulatorWidget(QWidget):
 		self.experimental_status_label = QLabel("No experimental data loaded.")
 		self.experimental_status_label.setWordWrap(True)
 
+		# channel selection
+		channelLayout = QHBoxLayout()
+
+		channelLabel = QLabel("Channel:")
+
+		self.experimental_channel_dropdown = QComboBox(self)
+		self.experimental_channel_dropdown.setEnabled(False)
+		self.experimental_channel_dropdown.currentTextChanged.connect(self.updateExperimentalSelection)
+
+		channelLayout.addWidget(channelLabel)
+		channelLayout.addWidget(self.experimental_channel_dropdown)
+		channelLayout.addStretch(1)
+
+		# scan direction selection
+		directionLayout = QHBoxLayout()
+
+		directionLabel = QLabel("Direction:")
+
+		self.experimental_direction_dropdown = QComboBox(self)
+		self.experimental_direction_dropdown.setEnabled(False)
+		self.experimental_direction_dropdown.currentTextChanged.connect(self.updateExperimentalSelection)
+
+		directionLayout.addWidget(directionLabel)
+		directionLayout.addWidget(self.experimental_direction_dropdown)
+		directionLayout.addStretch(1)
+
 		layout.addWidget(description)
 		layout.addWidget(self.experimental_import_btn)
 		layout.addWidget(self.experimental_status_label)
+		layout.addSpacing(4)
+		layout.addLayout(channelLayout)
+		layout.addLayout(directionLayout)
 		layout.addStretch(1)
 
 		groupBox.setLayout(layout)
@@ -686,10 +715,27 @@ class SimulatorWidget(QWidget):
 		self.experimental_data = experimentalData
 		self.experimental_file_path = filePath
 
+		# populate the dropdowns without triggering their callbacks while they are being filled
+		self.experimental_channel_dropdown.blockSignals(True)
+		self.experimental_direction_dropdown.blockSignals(True)
+
+		self.experimental_channel_dropdown.clear()
+		self.experimental_channel_dropdown.addItems(experimentalData.channels)
+		self.experimental_channel_dropdown.setCurrentText(channel)
+
+		self.experimental_direction_dropdown.clear()
+		self.experimental_direction_dropdown.addItems(experimentalData.directions)
+		self.experimental_direction_dropdown.setCurrentText(direction)
+
+		self.experimental_channel_dropdown.blockSignals(False)
+		self.experimental_direction_dropdown.blockSignals(False)
+
+		self.experimental_channel_dropdown.setEnabled(True)
+		self.experimental_direction_dropdown.setEnabled(True)
+
 		self.experimental_status_label.setText(
 			f"{experimentalData.file_name}\n"
-			f"Channel: {channel}, Direction: {direction}\n"
-			f"{experimentalData.nx} x {experimentalData.ny} pixels	"
+			f"{experimentalData.nx} x {experimentalData.ny} pixels    "
 			f"{experimentalData.x_range_nm:.3f} x {experimentalData.y_range_nm:.3f} nm"
 		)
 
@@ -697,7 +743,26 @@ class SimulatorWidget(QWidget):
 
 		return True
 
-	
+	def updateExperimentalSelection(self):
+		if self.experimental_data is None:
+			return
+
+		channel = self.experimental_channel_dropdown.currentText()
+		direction = self.experimental_direction_dropdown.currentText()
+
+		if channel == "" or direction == "":
+			return
+
+		try:
+			self.experimental_data.load_channel(channel, direction)
+
+		except Exception as error:
+			QMessageBox.critical(
+				self,
+				"Experimental data error",
+				"The selected experimental data could not be loaded.\n\n" + str(error)
+			)
+			return
 
 	def initImageParameters(self):
 		groupBox = QGroupBox("Image parameters")
