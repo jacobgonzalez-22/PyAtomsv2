@@ -146,6 +146,7 @@ class SimulatorWidget(QWidget):
 		self.fft_filter_display = "Original"
 		self.fft_selections = []
 		self.fft_selector = None
+		self.experimental_fft_selector = None
 		self.fft_complex = None
 		self.real_space_plot = None
 
@@ -153,19 +154,34 @@ class SimulatorWidget(QWidget):
 
 		self.fft_filtered_image = None
 
+		# experimental FFT filtering stays on the native experimental grid
+		self.experimental_fft_complex = None
+		self.experimental_fft_filtered_image = None
+		self.experimental_fft_mask = None
+
 		# mask made from the selected FFT regions
 		self.fft_mask = None
 
 		# keep track of FFT slection patches currently drawn
 		self.fft_selection_patches = []
 
+		# keep track of FFT selection patches drawn on the experimental FFT
+		self.experimental_fft_selection_patches = []
+
 		# settings for the mirrored FFT selection preview
 		self.fft_drag_start = None
+		self.fft_drag_axis = None
 		self.fft_mirror_preview = None
 		self.fft_main_preview = None
 		self.fft_press_cid = None
 		self.fft_motion_cid = None
 		self.fft_release_cid = None
+		self.fft_click_cid = None
+
+		self.experimental_fft_press_cid = None
+		self.experimental_fft_motion_cid = None
+		self.experimental_fft_release_cid = None
+		self.experimental_fft_click_cid = None
 
 		# line profile tool
 		self.line_profile_selecting = False
@@ -924,6 +940,10 @@ class SimulatorWidget(QWidget):
 		self.experimental_lowpass_enabled = False
 		self.experimental_lowpass_sigma_nm = 0.0
 
+		self.experimental_fft_complex = None
+		self.experimental_fft_filtered_image = None
+		self.experimental_fft_mask = None
+
 		self.experimental_clear_btn.setEnabled(False)
 
 		# remove old experimental plots
@@ -1330,10 +1350,24 @@ class SimulatorWidget(QWidget):
 			)
 			self.experimental_fft_ax.add_artist(circ_k)
 
+		# redraw any stored 2D FFT selections on the experimental FFT
+		self.drawExperimentalFFTSelections()
+
 		self.redrawExperimentalLineProfiles()
 
 		self.experimental_canvas.draw_idle()
 		self.experimental_fft_canvas.draw_idle()
+
+		# recreate the interactive selector after rebuilding the experimental FFT axes
+		if self.fft_filter_enabled:
+			self.createExperimentalFFTSelector()
+
+		# rebuild the experimental FFT filter after the experimental image changes
+		if hasattr(self, "filter_tabs") and self.filter_tabs.currentIndex() == 1:
+			self.buildFFTMask()
+
+			if self.fft_filter_display != "Original":
+				self.updateFFTFilteredImage()
 
 		if hasattr(self, "experimental_plot_widget"):
 			self.experimental_plot_widget.show()
@@ -4385,7 +4419,12 @@ class SimulatorWidget(QWidget):
 		if self.experimental_data.processed is None:
 			return None
 
-		image = self.getExperimentalDisplayImage()
+		# use the image currently being analyzed/displayed
+		if hasattr(self, "filter_tabs") and self.filter_tabs.currentIndex() == 1:
+			image = self.getExperimentalFFTFilteredImage()
+
+		else:
+			image = self.getExperimentalDisplayImage()
 
 		if image is None:
 			return None
@@ -4578,6 +4617,34 @@ class SimulatorWidget(QWidget):
 			self.line_profile_experimental_width_pixels,
 			self.line_profile_experimental_source
 		) = result
+
+	def refreshSimulationLineProfileData(self):
+		if len(self.line_profiles) == 0:
+			return
+
+		activeIndex = self.active_line_profile_index
+
+		for profile in self.line_profiles:
+			self.line_profile_start = tuple(profile["start"])
+			self.line_profile_end = tuple(profile["end"])
+			self.line_profile_width_pixels = int(profile["width_pixels"])
+
+			self.calculateLineProfile()
+
+			profile["distance"] = self.line_profile_distance
+			profile["values"] = self.line_profile_values
+			profile["source"] = self.line_profile_source
+
+		if activeIndex is not None and 0 <= activeIndex < len(self.line_profiles):
+			profile = self.line_profiles[activeIndex]
+
+			self.active_line_profile_index = activeIndex
+			self.line_profile_start = tuple(profile["start"])
+			self.line_profile_end = tuple(profile["end"])
+			self.line_profile_width_pixels = int(profile["width_pixels"])
+			self.line_profile_distance = profile.get("distance")
+			self.line_profile_values = profile.get("values")
+			self.line_profile_source = profile.get("source")
 
 	def refreshExperimentalLineProfileData(self):
 		for profile in self.line_profiles:
@@ -4802,11 +4869,15 @@ class SimulatorWidget(QWidget):
 		saveButton = QPushButton("Save selected profile", dialog)
 		saveButton.clicked.connect(self.saveLineProfile)
 
+		saveAllButton = QPushButton("Save all profiles", dialog)
+		saveAllButton.clicked.connect(self.saveAllLineProfiles)
+
 		closeButton = QPushButton("Close", dialog)
 		closeButton.clicked.connect(dialog.close)
 
 		buttonLayout = QHBoxLayout()
 		buttonLayout.addWidget(saveButton)
+		buttonLayout.addWidget(saveAllButton)
 		buttonLayout.addStretch(1)
 		buttonLayout.addWidget(closeButton)
 
@@ -5281,10 +5352,18 @@ class SimulatorWidget(QWidget):
 		self.line_profile_plot_canvas.draw_idle()
 
 	def saveLineProfile(self):
-		if self.line_profile_distance is None:
+		if self.active_line_profile_index is None:
 			return
 
-		if self.line_profile_values is None:
+		if self.active_line_profile_index < 0 or self.active_line_profile_index >= len(self.line_profiles):
+			return
+
+		profile = self.line_profiles[self.active_line_profile_index]
+
+		simulationDistance = profile.get("distance")
+		simulationValues = profile.get("values")
+
+		if simulationDistance is None or simulationValues is None:
 			return
 
 		fileName, _ = QFileDialog.getSaveFileName(
@@ -5300,32 +5379,203 @@ class SimulatorWidget(QWidget):
 		if not fileName.lower().endswith(".csv"):
 			fileName += ".csv"
 
-		data = np.column_stack(
-			(
-				self.line_profile_distance,
-				self.line_profile_values
+		simulationDistance = np.asarray(simulationDistance, dtype=float)
+		simulationValues = np.asarray(simulationValues, dtype=float)
+
+		x1, y1 = profile["start"]
+		x2, y2 = profile["end"]
+
+		if self.comparison_mode and self.experimental_data is not None:
+			experimentalDistance = profile.get("experimental_distance")
+			experimentalValues = profile.get("experimental_values")
+
+			if experimentalDistance is not None and experimentalValues is not None:
+				experimentalDistance = np.asarray(experimentalDistance, dtype=float)
+				experimentalValues = np.asarray(experimentalValues, dtype=float)
+
+				maxLength = max(len(simulationDistance), len(experimentalDistance))
+
+				simulationDistancePadded = np.full(maxLength, np.nan)
+				simulationValuesPadded = np.full(maxLength, np.nan)
+				experimentalDistancePadded = np.full(maxLength, np.nan)
+				experimentalValuesPadded = np.full(maxLength, np.nan)
+
+				simulationDistancePadded[:len(simulationDistance)] = simulationDistance
+				simulationValuesPadded[:len(simulationValues)] = simulationValues
+				experimentalDistancePadded[:len(experimentalDistance)] = experimentalDistance
+				experimentalValuesPadded[:len(experimentalValues)] = experimentalValues
+
+				data = np.column_stack((simulationDistancePadded, simulationValuesPadded, experimentalDistancePadded, experimentalValuesPadded))
+
+				header = (
+					"PyAtoms line profile\n"
+					"profile_number=%d\n"
+					"start_x_nm=%.8g, start_y_nm=%.8g\n"
+					"end_x_nm=%.8g, end_y_nm=%.8g\n"
+					"simulation_width_pixels=%d\n"
+					"experimental_width_pixels=%s\n"
+					"simulation_display=%s\n"
+					"experimental_source=%s\n"
+					"simulation_distance_nm,simulation_signal_arb_units,"
+					"experimental_distance_nm,experimental_signal_arb_units"
+					% (
+						profile["number"],
+						x1,
+						y1,
+						x2,
+						y2,
+						profile["width_pixels"],
+						str(profile.get("experimental_width_pixels")),
+						str(profile.get("source")),
+						str(profile.get("experimental_source"))
+					)
+				)
+
+			else:
+				data = np.column_stack((simulationDistance, simulationValues))
+
+				header = (
+					"PyAtoms line profile\n"
+					"profile_number=%d\n"
+					"start_x_nm=%.8g, start_y_nm=%.8g\n"
+					"end_x_nm=%.8g, end_y_nm=%.8g\n"
+					"width_pixels=%d\n"
+					"display=%s\n"
+					"distance_nm,signal_arb_units"
+					% (
+						profile["number"],
+						x1,
+						y1,
+						x2,
+						y2,
+						profile["width_pixels"],
+						str(profile.get("source"))
+					)
+				)
+
+		else:
+			data = np.column_stack((simulationDistance, simulationValues))
+
+			header = (
+				"PyAtoms line profile\n"
+				"profile_number=%d\n"
+				"start_x_nm=%.8g, start_y_nm=%.8g\n"
+				"end_x_nm=%.8g, end_y_nm=%.8g\n"
+				"width_pixels=%d\n"
+				"display=%s\n"
+				"distance_nm,signal_arb_units"
+				% (
+					profile["number"],
+					x1,
+					y1,
+					x2,
+					y2,
+					profile["width_pixels"],
+					str(profile.get("source"))
+				)
 			)
+
+		np.savetxt(
+			fileName,
+			data,
+			delimiter=",",
+			header=header,
+			comments="# "
 		)
 
-		x1, y1 = self.line_profile_start
-		x2, y2 = self.line_profile_end
+	def saveAllLineProfiles(self):
+		if len(self.line_profiles) == 0:
+			return
 
-		header = (
-			"PyAtoms line profile\n"
-			"start_x_nm=%.8g, start_y_nm=%.8g\n"
-			"end_x_nm=%.8g, end_y_nm=%.8g\n"
-			"width_pixels=%d\n"
-			"display=%s\n"
-			"distance_nm,signal_arb_units"
-			% (
-				x1,
-				y1,
-				x2,
-				y2,
-				self.line_profile_width_pixels,
-				self.line_profile_source
-			)
+		fileName, _ = QFileDialog.getSaveFileName(
+			self,
+			"Save all line profiles",
+			os.getcwd(),
+			"CSV files (*.csv)"
 		)
+
+		if fileName == "":
+			return
+
+		if not fileName.lower().endswith(".csv"):
+			fileName += ".csv"
+
+		comparisonActive = self.comparison_mode and self.experimental_data is not None
+
+		columnArrays = []
+		columnNames = []
+
+		metadataLines = ["PyAtoms line profiles"]
+		savedProfileCount = 0
+
+		for profile in self.line_profiles:
+			simulationDistance = profile.get("distance")
+			simulationValues = profile.get("values")
+
+			if simulationDistance is None or simulationValues is None:
+				continue
+
+			profileNumber = profile["number"]
+
+			simulationDistance = np.asarray(simulationDistance, dtype=float)
+			simulationValues = np.asarray(simulationValues, dtype=float)
+
+			columnArrays.extend([simulationDistance, simulationValues])
+			columnNames.extend([f"profile_{profileNumber}_simulation_distance_nm", f"profile_{profileNumber}_simulation_signal_arb_units"])
+
+			x1, y1 = profile["start"]
+			x2, y2 = profile["end"]
+
+			simulationMetadata = (
+				f"profile_{profileNumber}: "
+				f"start_x_nm={x1:.8g}, start_y_nm={y1:.8g}, "
+				f"end_x_nm={x2:.8g}, end_y_nm={y2:.8g}, "
+				f"simulation_width_pixels={profile['width_pixels']}"
+			)
+
+			metadataLines.append(simulationMetadata)
+
+			if comparisonActive:
+				experimentalDistance = profile.get("experimental_distance")
+				experimentalValues = profile.get("experimental_values")
+
+				if experimentalDistance is None:
+					experimentalDistance = np.asarray([], dtype=float)
+				else:
+					experimentalDistance = np.asarray(experimentalDistance, dtype=float)
+
+				if experimentalValues is None:
+					experimentalValues = np.asarray([], dtype=float)
+				else:
+					experimentalValues = np.asarray(experimentalValues, dtype=float)
+
+				columnArrays.extend([experimentalDistance, experimentalValues])
+				columnNames.extend([f"profile_{profileNumber}_experimental_distance_nm", f"profile_{profileNumber}_experimental_signal_arb_units"])
+
+				experimentalMetadata = (
+					f"profile_{profileNumber}_experimental: "
+					f"width_pixels={profile.get('experimental_width_pixels')}, "
+					f"source={profile.get('experimental_source')}"
+				)
+
+				metadataLines.append(experimentalMetadata)
+
+			savedProfileCount += 1
+
+		if savedProfileCount == 0:
+			return
+
+		metadataLines.insert(1, f"profile_count={savedProfileCount}")
+
+		maxLength = max(len(column) for column in columnArrays)
+
+		data = np.full((maxLength, len(columnArrays)), np.nan)
+
+		for columnIndex, column in enumerate(columnArrays):
+			data[:len(column), columnIndex] = column
+
+		metadataLines.append(",".join(columnNames))
+		header = "\n".join(metadataLines)
 
 		np.savetxt(
 			fileName,
@@ -8987,15 +9237,51 @@ class SimulatorWidget(QWidget):
 	def updateFilterTarget(self):
 		self.filter_target = self.filter_target_dropdown.currentText()
 
-		if self.filter_btn.isChecked():
-			self.updateSigma()
+		# changing targets should not leave a hidden FFT selection active
+		self.fft_active_selection = None
+		self.fft_width_input.clear()
+		self.fft_height_input.clear()
+		self.fft_angle_input.clear()
+
+		if self.fft_filter_enabled:
+			self.updateFFTSelectorsForTarget()
+
+		# redraw only the selections that belong to each FFT
+		self.drawFFTSelections()
+		self.drawExperimentalFFTSelections()
+
+		# low pass filter
+		if self.filter_tabs.currentIndex() == 0:
+			if self.filter_btn.isChecked():
+				self.updateSigma()
+
+		# 2D FFT filter
+		elif self.filter_tabs.currentIndex() == 1:
+			self.buildFFTMask()
+			self.updateFFTFilteredImage()
 
 	def hideFFTSelections(self):
 		for patch in self.fft_selection_patches:
-			patch.remove()
+			try:
+				patch.remove()
+			except Exception:
+				pass
 
 		self.fft_selection_patches = []
+
+		# also remove the mirrored drawings from the experimental FFT
+		for patch in self.experimental_fft_selection_patches:
+			try:
+				patch.remove()
+			except Exception:
+				pass
+
+		self.experimental_fft_selection_patches = []
+
 		self.canvas.draw_idle()
+
+		if hasattr(self, "experimental_fft_canvas"):
+			self.experimental_fft_canvas.draw_idle()
 
 	def updateActiveFilterTab(self, index):
 		"""
@@ -9068,6 +9354,11 @@ class SimulatorWidget(QWidget):
 		if self.fft_active_selection >= len(self.fft_selections):
 			return
 
+		selection = self.fft_selections[self.fft_active_selection]
+
+		if len(selection.get("targets", {"Simulation"})) == 0:
+			return
+
 		# edit the most recently created FFT selection
 		self.fft_selections[self.fft_active_selection]["width"] = width
 		self.fft_selections[self.fft_active_selection]["height"] = height
@@ -9093,6 +9384,40 @@ class SimulatorWidget(QWidget):
 
 		self.fft_selector = EllipseSelector(self.ax_fft, self.onFFTSelect, useblit = True, button = [1], interactive = False, props = dict(facecolor = "cyan", edgecolor = "cyan", alpha = 0.25), state_modifier_keys = {"square": "shift"})
 
+	def createExperimentalFFTSelector(self):
+		"""
+		create the interactive FFT ellipse selector on the experimental FFT
+		"""
+
+		if not self.comparison_mode:
+			return
+
+		if self.experimental_data is None:
+			return
+
+		if not hasattr(self, "experimental_fft_ax"):
+			return
+
+		# discard the old selector before attaching one to the new FFT axes
+		if self.experimental_fft_selector is not None:
+			self.experimental_fft_selector.set_active(False)
+			self.experimental_fft_selector.disconnect_events()
+			self.experimental_fft_selector = None
+
+		self.experimental_fft_selector = EllipseSelector(
+			self.experimental_fft_ax,
+			self.onFFTSelect,
+			useblit=True,
+			button=[1],
+			interactive=False,
+			props=dict(
+				facecolor="cyan",
+				edgecolor="cyan",
+				alpha=0.25
+			),
+			state_modifier_keys={"square": "shift"}
+		)
+
 	def toggleFFTSelection(self):
 		"""
 		turn interactive FFT region selection on and off
@@ -9101,15 +9426,71 @@ class SimulatorWidget(QWidget):
 			self.fft_filter_enabled = True
 			self.fft_select_btn.setText("Stop selecting")
 
-			# create an ellipse selector on the FFT plot
-			self.createFFTSelector()
+			# show both FFT tabs while selecting in comparison mode
+			if self.comparison_mode:
+				if hasattr(self, "simulation_plot_tabs"):
+					self.simulation_plot_tabs.setCurrentIndex(1)
+
+				if hasattr(self, "experimental_plot_tabs"):
+					self.experimental_plot_tabs.setCurrentIndex(1)
+
+			# create the FFT selector(s) for the selected dataset target
+			self.updateFFTSelectorsForTarget()
 
 			# update the mirrored region while the user drags a selection
-			self.fft_press_cid = self.canvas.mpl_connect("button_press_event", self.startFFTMirrorPreview)
-			self.fft_motion_cid = self.canvas.mpl_connect("motion_notify_event", self.updateFFTMirrorPreview)
-			self.fft_release_cid = self.canvas.mpl_connect("button_release_event", self.stopFFTMirrorPreview)
+			self.fft_press_cid = self.canvas.mpl_connect(
+				"button_press_event",
+				self.startFFTMirrorPreview
+			)
 
-			self.fft_click_cid = self.canvas.mpl_connect("button_press_event", self.selectExistingFFTRegion)
+			self.fft_motion_cid = self.canvas.mpl_connect(
+				"motion_notify_event",
+				self.updateFFTMirrorPreview
+			)
+
+			self.fft_release_cid = self.canvas.mpl_connect(
+				"button_release_event",
+				self.stopFFTMirrorPreview
+			)
+
+			self.fft_click_cid = self.canvas.mpl_connect(
+				"button_press_event",
+				self.selectExistingFFTRegion
+			)
+
+			# connect the same selection controls to the experimental FFT
+			if (
+				self.comparison_mode
+				and self.experimental_data is not None
+				and hasattr(self, "experimental_fft_canvas")
+			):
+				self.experimental_fft_press_cid = (
+					self.experimental_fft_canvas.mpl_connect(
+						"button_press_event",
+						self.startFFTMirrorPreview
+					)
+				)
+
+				self.experimental_fft_motion_cid = (
+					self.experimental_fft_canvas.mpl_connect(
+						"motion_notify_event",
+						self.updateFFTMirrorPreview
+					)
+				)
+
+				self.experimental_fft_release_cid = (
+					self.experimental_fft_canvas.mpl_connect(
+						"button_release_event",
+						self.stopFFTMirrorPreview
+					)
+				)
+
+				self.experimental_fft_click_cid = (
+					self.experimental_fft_canvas.mpl_connect(
+						"button_press_event",
+						self.selectExistingFFTRegion
+					)
+				)
 
 		else:
 			self.fft_filter_enabled = False
@@ -9120,6 +9501,11 @@ class SimulatorWidget(QWidget):
 				self.fft_selector.set_active(False)
 				self.fft_selector.disconnect_events()
 				self.fft_selector = None
+
+			if self.experimental_fft_selector is not None:
+				self.experimental_fft_selector.set_active(False)
+				self.experimental_fft_selector.disconnect_events()
+				self.experimental_fft_selector = None
 
 			# disconnect the mirrored selection preview
 			if self.fft_press_cid is not None:
@@ -9134,18 +9520,77 @@ class SimulatorWidget(QWidget):
 				self.canvas.mpl_disconnect(self.fft_release_cid)
 				self.fft_release_cid = None
 
+			if self.fft_click_cid is not None:
+				self.canvas.mpl_disconnect(self.fft_click_cid)
+				self.fft_click_cid = None
+
+			# disconnect the experimental FFT selection events
+			if (
+				self.experimental_fft_press_cid is not None
+				and hasattr(self, "experimental_fft_canvas")
+			):
+				self.experimental_fft_canvas.mpl_disconnect(
+					self.experimental_fft_press_cid
+				)
+				self.experimental_fft_press_cid = None
+
+			if (
+				self.experimental_fft_motion_cid is not None
+				and hasattr(self, "experimental_fft_canvas")
+			):
+				self.experimental_fft_canvas.mpl_disconnect(
+					self.experimental_fft_motion_cid
+				)
+				self.experimental_fft_motion_cid = None
+
+			if (
+				self.experimental_fft_release_cid is not None
+				and hasattr(self, "experimental_fft_canvas")
+			):
+				self.experimental_fft_canvas.mpl_disconnect(
+					self.experimental_fft_release_cid
+				)
+				self.experimental_fft_release_cid = None
+
+			if (
+				self.experimental_fft_click_cid is not None
+				and hasattr(self, "experimental_fft_canvas")
+			):
+				self.experimental_fft_canvas.mpl_disconnect(
+					self.experimental_fft_click_cid
+				)
+				self.experimental_fft_click_cid = None
+
 			self.fft_drag_start = None
+			self.fft_drag_axis = None
+
+			if self.fft_main_preview is not None:
+				self.fft_main_preview.remove()
+				self.fft_main_preview = None
 
 			if self.fft_mirror_preview is not None:
 				self.fft_mirror_preview.remove()
 				self.fft_mirror_preview = None
-				self.canvas.draw_idle()
+
+			self.canvas.draw_idle()
+
+			if hasattr(self, "experimental_fft_canvas"):
+				self.experimental_fft_canvas.draw_idle()
 
 	def selectExistingFFTRegion(self, event):
 		if not self.fft_precise_checkbox.isChecked():
 			return
-		
-		if event.inaxes != self.ax_fft:
+
+		onSimulation = event.inaxes == self.ax_fft
+
+		onExperimental = (
+			self.comparison_mode
+			and self.experimental_data is not None
+			and hasattr(self, "experimental_fft_ax")
+			and event.inaxes == self.experimental_fft_ax
+		)
+
+		if not onSimulation and not onExperimental:
 			return
 
 		if event.xdata is None or event.ydata is None:
@@ -9157,9 +9602,20 @@ class SimulatorWidget(QWidget):
 		x = event.xdata
 		y = event.ydata
 
+		if onSimulation:
+			clickTarget = "Simulation"
+		else:
+			clickTarget = "Experimental"
+
 		# search newest selections first
 		for i in range(len(self.fft_selections) - 1, -1, -1):
 			selection = self.fft_selections[i]
+
+			targets = selection.get("targets", {"Simulation"})
+
+			# only allow selections belonging to the FFT that was clicked
+			if clickTarget not in targets:
+				continue
 
 			center_x = selection["center_x"]
 			center_y = selection["center_y"]
@@ -9170,15 +9626,31 @@ class SimulatorWidget(QWidget):
 			if width <= 0 or height <= 0:
 				continue
 
-			# normalized ellipse equation
-			dx = (x - center_x) / (width / 2)
-			dy = (y - center_y) / (height / 2)
+			# rotate the clicked point into the ellipse's local coordinates
+			theta = np.deg2rad(angle)
+			cosTheta = np.cos(theta)
+			sinTheta = np.sin(theta)
 
-			if dx**2 + dy**2 <= 1:
+			dx = x - center_x
+			dy = y - center_y
+
+			rotatedX = dx * cosTheta + dy * sinTheta
+			rotatedY = -dx * sinTheta + dy * cosTheta
+
+			# normalized ellipse equation
+			normalizedX = rotatedX / (width / 2)
+			normalizedY = rotatedY / (height / 2)
+
+			if normalizedX**2 + normalizedY**2 <= 1:
 				self.fft_active_selection = i
 
 				self.drawFFTSelections()
+				self.drawExperimentalFFTSelections()
+
 				self.canvas.draw_idle()
+
+				if hasattr(self, "experimental_fft_canvas"):
+					self.experimental_fft_canvas.draw_idle()
 
 				self.fft_width_input.setText(f"{width:.4f}")
 				self.fft_height_input.setText(f"{height:.4f}")
@@ -9193,13 +9665,37 @@ class SimulatorWidget(QWidget):
 		"""
 
 		# only start selections made with the left mouse button on the fft
-		if event.inaxes != self.ax_fft or event.button != 1:
+		onSimulation = event.inaxes == self.ax_fft
+
+		onExperimental = (
+			self.comparison_mode
+			and self.experimental_data is not None
+			and hasattr(self, "experimental_fft_ax")
+			and event.inaxes == self.experimental_fft_ax
+		)
+
+		if not onSimulation and not onExperimental:
+			return
+
+		filterTarget = getattr(self, "filter_target", "Simulation")
+
+		# only allow previews on the dataset selected by Apply to
+		if filterTarget == "Simulation" and not onSimulation:
+			return
+
+		if filterTarget == "Experimental" and not onExperimental:
+			return
+
+		if event.button != 1:
 			return
 
 		if event.xdata is None or event.ydata is None:
 			return
 
 		self.fft_drag_start = (event.xdata, event.ydata)
+
+		# remember which FFT the drag began on
+		self.fft_drag_axis = event.inaxes
 
 
 	def updateFFTMirrorPreview(self, event):
@@ -9210,7 +9706,10 @@ class SimulatorWidget(QWidget):
 		if self.fft_drag_start is None:
 			return
 
-		if event.inaxes != self.ax_fft:
+		if self.fft_drag_axis is None:
+			return
+
+		if event.inaxes != self.fft_drag_axis:
 			return
 
 		if event.xdata is None or event.ydata is None:
@@ -9254,44 +9753,83 @@ class SimulatorWidget(QWidget):
 			center_x = (x1 + x2) / 2
 			center_y = (y1 + y2) / 2
 
+		# determine which FFT axes and selector started this drag
+		if self.fft_drag_axis == self.ax_fft:
+			sourceAxis = self.ax_fft
+			sourceSelector = self.fft_selector
+			sourceCanvas = self.canvas
+
+		else:
+			sourceAxis = self.experimental_fft_ax
+			sourceSelector = self.experimental_fft_selector
+			sourceCanvas = self.experimental_fft_canvas
+
 		if shift_held or snap_origin:
 			# hide matplotlib's unconstrained temporary ellipse
-			if self.fft_selector is not None:
-				self.fft_selector.set_visible(False)
+			if sourceSelector is not None:
+				sourceSelector.set_visible(False)
 
 			# create the main circular preview
 			if self.fft_main_preview is None:
-				self.fft_main_preview = Ellipse((center_x, center_y), width, height, facecolor = "cyan", edgecolor = "cyan", alpha = 0.25)
-				self.ax_fft.add_patch(self.fft_main_preview)
+				self.fft_main_preview = Ellipse(
+					(center_x, center_y),
+					width,
+					height,
+					facecolor="cyan",
+					edgecolor="cyan",
+					alpha=0.25
+				)
+
+				sourceAxis.add_patch(
+					self.fft_main_preview
+				)
 
 			else:
-				self.fft_main_preview.center = (center_x, center_y)
+				self.fft_main_preview.center = (
+					center_x,
+					center_y
+				)
+
 				self.fft_main_preview.width = width
 				self.fft_main_preview.height = height
 
 		else:
 			# show matplotlib's normal ellipse preview again
-			if self.fft_selector is not None:
-				self.fft_selector.set_visible(True)
+			if sourceSelector is not None:
+				sourceSelector.set_visible(True)
 
 			# remove our custom main preview when Shift is released
 			if self.fft_main_preview is not None:
 				self.fft_main_preview.remove()
-				self.fft_main_preview = None	
+				self.fft_main_preview = None
 
 
 		# create the mirroed preview the first time the mouse moves
 		if self.fft_mirror_preview is None:
-			self.fft_mirror_preview = Ellipse((-center_x, -center_y), width, height, facecolor = "cyan", edgecolor = "cyan", alpha = 0.25)
-			self.ax_fft.add_patch(self.fft_mirror_preview)
+			self.fft_mirror_preview = Ellipse(
+				(-center_x, -center_y),
+				width,
+				height,
+				facecolor="cyan",
+				edgecolor="cyan",
+				alpha=0.25
+			)
+
+			sourceAxis.add_patch(
+				self.fft_mirror_preview
+			)
 
 		# update the existing preview as the selection changes
 		else:
-			self.fft_mirror_preview.center = (-center_x, -center_y)
+			self.fft_mirror_preview.center = (
+				-center_x,
+				-center_y
+			)
+
 			self.fft_mirror_preview.width = width
 			self.fft_mirror_preview.height = height
 
-		self.canvas.draw_idle()
+		sourceCanvas.draw_idle()
 
 	def stopFFTMirrorPreview(self, event):
 		"""
@@ -9299,6 +9837,7 @@ class SimulatorWidget(QWidget):
 		"""
 
 		self.fft_drag_start = None
+		self.fft_drag_axis = None
 
 		if self.fft_main_preview is not None:
 			self.fft_main_preview.remove()
@@ -9309,6 +9848,9 @@ class SimulatorWidget(QWidget):
 			self.fft_mirror_preview = None
 
 		self.canvas.draw_idle()
+
+		if hasattr(self, "experimental_fft_canvas"):
+			self.experimental_fft_canvas.draw_idle()
 
 
 	def updateFFTFilterDisplay(self):
@@ -9327,12 +9869,71 @@ class SimulatorWidget(QWidget):
 
 		self.updateFFTFilteredImage()
 
+	def hasFFTSelectionsForTarget(self, target):
+		for selection in self.fft_selections:
+			targets = selection.get("targets", {"Simulation"})
+
+			if target in targets:
+				return True
+
+		return False
+
+	def getExperimentalFFTFilteredImage(self):
+		"""
+		return the experimental real space image for the selected FFT display mode
+		"""
+
+		if self.experimental_data is None:
+			return None
+
+		if self.experimental_data.processed is None:
+			return None
+
+		originalImage = np.asarray(
+			self.experimental_data.processed,
+			dtype=float
+		)
+
+		# leave experimental untouched when the FFT filter is only applied to simulation
+		if self.filter_target not in (
+			"Experimental",
+			"Both"
+		):
+			return originalImage
+
+		if self.fft_filter_display == "Original":
+			return originalImage
+
+		if not self.hasFFTSelectionsForTarget("Experimental"):
+			return originalImage
+
+		if self.experimental_fft_filtered_image is None:
+			return originalImage
+
+		if self.fft_filter_display == "Filtered":
+			return self.experimental_fft_filtered_image
+
+		if self.fft_filter_display == "Difference":
+			return originalImage - self.experimental_fft_filtered_image
+
+		return originalImage
+
 	def getFFTFilteredImage(self):
 		"""
 		return the real space image for the selected FFT display mode
 		"""
 
+		# leave simulation untouched when the FFT filter is only applied to experimental
+		if self.filter_target not in (
+			"Simulation",
+			"Both"
+		):
+			return self.Z
+
 		if self.fft_filter_display == "Original":
+			return self.Z
+
+		if not self.hasFFTSelectionsForTarget("Simulation"):
 			return self.Z
 
 		if self.fft_filtered_image is None:
@@ -9346,7 +9947,7 @@ class SimulatorWidget(QWidget):
 
 		return self.Z
 
-	def  updateFFTFilteredImage(self):
+	def updateFFTFilteredImage(self):
 		"""
 		update the displayed real space image without rebuilding the simulatiom
 		"""
@@ -9359,14 +9960,58 @@ class SimulatorWidget(QWidget):
 		self.real_space_plot.set_data(Z_display)
 
 		# update the displayed height range for the selected FFT components
-		zmin = np.min(Z_display)
-		zmax = np.max(Z_display)
+		zmin = np.nanmin(Z_display)
+		zmax = np.nanmax(Z_display)
 
 		if zmax > zmin:
 			self.real_space_plot.set_clim(zmin, zmax)
 
 
+		# update the experimental real-space image independently
+		if (
+			self.experimental_data is not None
+			and hasattr(self, "experimental_image_plot")
+			and self.experimental_image_plot is not None
+		):
+			experimentalDisplay = self.getExperimentalFFTFilteredImage()
+
+			if experimentalDisplay is not None:
+				self.experimental_image_plot.set_data(
+					experimentalDisplay
+				)
+
+				finiteMask = np.isfinite(experimentalDisplay)
+
+				if np.any(finiteMask):
+					expMin = np.min(
+						experimentalDisplay[finiteMask]
+					)
+
+					expMax = np.max(
+						experimentalDisplay[finiteMask]
+					)
+
+					if expMax > expMin:
+						self.experimental_image_plot.set_clim(
+							expMin,
+							expMax
+						)
+
+		# update stored line profiles to match the currently displayed FFT-filtered data
+		self.refreshSimulationLineProfileData()
+
+		if self.experimental_data is not None:
+			self.refreshExperimentalLineProfileData()
+
+		else:
+			self.refreshOpenLineProfilePlot()
+
+		self.updateOpenLineProfileInfo()
+
 		self.canvas.draw_idle()
+
+		if hasattr(self, "experimental_canvas"):
+			self.experimental_canvas.draw_idle()
 
 			
 
@@ -9382,6 +10027,28 @@ class SimulatorWidget(QWidget):
 
 		# ignore selections that start or end outside the FFT axes
 		if x1 is None or y1 is None or x2 is None or y2 is None:
+			return
+
+		# determine which FFT the selection came from
+		onSimulation = eclick.inaxes == self.ax_fft
+
+		onExperimental = (
+			self.comparison_mode
+			and self.experimental_data is not None
+			and hasattr(self, "experimental_fft_ax")
+			and eclick.inaxes == self.experimental_fft_ax
+		)
+
+		if not onSimulation and not onExperimental:
+			return
+
+		filterTarget = getattr(self, "filter_target", "Simulation")
+
+		# only allow drawing on the dataset selected by Apply to
+		if filterTarget == "Simulation" and not onSimulation:
+			return
+
+		if filterTarget == "Experimental" and not onExperimental:
 			return
 
 		snap_origin = self.fft_snap_origin_checkbox.isChecked()
@@ -9422,20 +10089,30 @@ class SimulatorWidget(QWidget):
 		if width == 0 or height == 0:
 			return
 
+		if filterTarget == "Both":
+			targets = {"Simulation", "Experimental"}
+
+		elif filterTarget == "Experimental":
+			targets = {"Experimental"}
+
+		else:
+			targets = {"Simulation"}
+
 		# store one selection -> the mirrored region is generated from this one
 		self.fft_selections.append({
 			"center_x": center_x,
 			"center_y": center_y,
 			"width": width,
 			"height": height,
-			"angle": 0.0
+			"angle": 0.0,
+			"targets": targets
 		})
 
 		self.fft_active_selection = len(self.fft_selections) - 1
 
 		if self.fft_precise_checkbox.isChecked():
 			self.fft_width_input.setText(f"{width:.4f}")
-			self.fft_height_input.setText(f"{height:4f}")
+			self.fft_height_input.setText(f"{height:.4f}")
 			self.fft_angle_input.setText("0.00")
 
 		self.drawFFTSelections()
@@ -9447,6 +10124,9 @@ class SimulatorWidget(QWidget):
 		# hide the selector's temporary ellipse after storign the selection
 		if self.fft_selector is not None:
 			self.fft_selector.set_visible(False)
+
+		if self.experimental_fft_selector is not None:
+			self.experimental_fft_selector.set_visible(False)
 
 	def drawFFTSelections(self):
 		""""
@@ -9461,6 +10141,11 @@ class SimulatorWidget(QWidget):
 
 		# redraw every saved selection
 		for i, selection in enumerate(self.fft_selections):
+			targets = selection.get("targets", {"Simulation"})
+
+			if "Simulation" not in targets:
+				continue
+
 			center_x = selection["center_x"]
 			center_y = selection["center_y"]
 			width = selection["width"]
@@ -9485,59 +10170,290 @@ class SimulatorWidget(QWidget):
 
 		self.canvas.draw_idle()
 
+		self.drawExperimentalFFTSelections()
+
+	def updateFFTSelectorsForTarget(self):
+		if not self.fft_filter_enabled:
+			return
+
+		filterTarget = getattr(self, "filter_target", "Simulation")
+
+		# Simulation selector
+		if filterTarget in ("Simulation", "Both"):
+			self.createFFTSelector()
+
+		else:
+			if self.fft_selector is not None:
+				self.fft_selector.set_active(False)
+				self.fft_selector.disconnect_events()
+				self.fft_selector = None
+
+		# Experimental selector
+		if (
+			filterTarget in ("Experimental", "Both")
+			and self.experimental_data is not None
+		):
+			self.createExperimentalFFTSelector()
+
+		else:
+			if self.experimental_fft_selector is not None:
+				self.experimental_fft_selector.set_active(False)
+				self.experimental_fft_selector.disconnect_events()
+				self.experimental_fft_selector = None
+
+	def drawExperimentalFFTSelections(self):
+		if not self.comparison_mode:
+			return
+
+		if self.experimental_data is None:
+			return
+
+		if not hasattr(self, "experimental_fft_ax"):
+			return
+
+		# remove previously drawn selection patches before redrawing
+		for patch in self.experimental_fft_selection_patches:
+			try:
+				patch.remove()
+			except Exception:
+				pass
+
+		self.experimental_fft_selection_patches = []
+
+		# redraw every saved selection
+		for i, selection in enumerate(self.fft_selections):
+			targets = selection.get("targets", {"Simulation"})
+
+			if "Experimental" not in targets:
+				continue
+
+			center_x = selection["center_x"]
+			center_y = selection["center_y"]
+			width = selection["width"]
+			height = selection["height"]
+			angle = selection["angle"]
+
+			# make the active selection easier to see
+			is_active = (
+				self.fft_precise_checkbox.isChecked()
+				and i == self.fft_active_selection
+			)
+
+			linewidth = 2.5 if is_active else 1.0
+			edgecolor = "yellow" if is_active else "cyan"
+
+			# selected region
+			ellipse = Ellipse(
+				(center_x, center_y),
+				width,
+				height,
+				angle=angle,
+				facecolor="cyan",
+				edgecolor=edgecolor,
+				linewidth=linewidth,
+				alpha=0.25
+			)
+
+			self.experimental_fft_ax.add_patch(ellipse)
+			self.experimental_fft_selection_patches.append(ellipse)
+
+			# mirrored region across the FFT origin
+			mirror_ellipse = Ellipse(
+				(-center_x, -center_y),
+				width,
+				height,
+				angle=angle,
+				facecolor="cyan",
+				edgecolor=edgecolor,
+				linewidth=linewidth,
+				alpha=0.25
+			)
+
+			self.experimental_fft_ax.add_patch(mirror_ellipse)
+			self.experimental_fft_selection_patches.append(mirror_ellipse)
+
+		self.experimental_fft_canvas.draw_idle()
+
+	def buildFFTSelectionMask(self, kx, ky, target):
+		"""
+		build the stored FFT selections on a supplied reciprocal-space grid
+		"""
+
+		KX, KY = np.meshgrid(kx, ky)
+		mask = np.zeros(KX.shape, dtype=bool)
+
+		for selection in self.fft_selections:
+			targets = selection.get("targets", {"Simulation"})
+
+			if target not in targets:
+				continue
+
+			center_x = selection["center_x"]
+			center_y = selection["center_y"]
+			radius_x = selection["width"] / 2
+			radius_y = selection["height"] / 2
+			angle = selection.get("angle", 0.0)
+
+			if radius_x <= 0 or radius_y <= 0:
+				continue
+
+			theta = np.deg2rad(angle)
+			cosTheta = np.cos(theta)
+			sinTheta = np.sin(theta)
+
+			# selected ellipse
+			dx = KX - center_x
+			dy = KY - center_y
+
+			rotatedX = dx * cosTheta + dy * sinTheta
+			rotatedY = -dx * sinTheta + dy * cosTheta
+
+			selected_region = (
+				(rotatedX / radius_x) ** 2
+				+ (rotatedY / radius_y) ** 2
+				<= 1
+			)
+
+			# mirrored ellipse
+			dxMirror = KX + center_x
+			dyMirror = KY + center_y
+
+			rotatedMirrorX = dxMirror * cosTheta + dyMirror * sinTheta
+			rotatedMirrorY = -dxMirror * sinTheta + dyMirror * cosTheta
+
+			mirrored_region = (
+				(rotatedMirrorX / radius_x) ** 2
+				+ (rotatedMirrorY / radius_y) ** 2
+				<= 1
+			)
+
+			mask = mask | selected_region | mirrored_region
+
+		return mask
+
 	def buildFFTMask(self):
 		"""
 		create a mask from the selected FFT regions
 		"""
 
 		# start with an empty mask the same size as the FFT
-		mask = np.zeros(self.fft_complex.shape, dtype = bool)
+		mask = np.zeros(self.fft_complex.shape, dtype=bool)
 
 		if len(self.fft_selections) == 0:
 			self.fft_mask = mask
 			self.fft_filtered_image = np.zeros_like(self.Z)
+
+			if self.experimental_data is not None:
+				experimentalImage = np.asarray(self.experimental_data.processed, dtype=float)
+
+				self.experimental_fft_mask = np.zeros(experimentalImage.shape, dtype=bool)
+				self.experimental_fft_complex = None
+				self.experimental_fft_filtered_image = np.zeros_like(experimentalImage)
+
 			return mask
 
 		# reciprocal space coords used by the displayed FFT
 		k = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(self.pix, self.L/self.pix))
 
-		KX, KY = np.meshgrid(k, k)
-
-		for selection in self.fft_selections:
-			center_x = selection["center_x"]
-			center_y = selection["center_y"]
-			radius_x = selection["width"]/2
-			radius_y = selection["height"]/2
-
-			# selected ellipse
-			selected_region = ((KX - center_x)/radius_x)**2 + ((KY - center_y)/radius_y)**2 <= 1
-
-			# mirrored ellipse
-			mirrored_region = ((KX + center_x)/radius_x)**2 + ((KY + center_y)/radius_y)**2 <= 1
-
-			mask = mask | selected_region | mirrored_region
+		mask = self.buildFFTSelectionMask(k, k, "Simulation")
 
 		self.fft_mask = mask
 
 		# reconstrut the selected FFT components when the mask changes
-		selected_fft = self.fft_complex*self.fft_mask
+		selected_fft = self.fft_complex * self.fft_mask
 		self.fft_filtered_image = np.real(npf.ifft2(npf.ifftshift(selected_fft)))
+
+		# build the same physical mask independently on the experimental FFT grid
+		if self.experimental_data is not None and self.experimental_data.processed is not None:
+			experimentalImage = np.asarray(self.experimental_data.processed, dtype=float)
+
+			ny, nx = experimentalImage.shape
+
+			xCoords = np.asarray(self.experimental_data.x_display_nm, dtype=float)
+			yCoords = np.asarray(self.experimental_data.y_display_nm, dtype=float)
+
+			if nx > 1 and ny > 1 and len(xCoords) > 1 and len(yCoords) > 1:
+				dx = abs(float(np.mean(np.diff(xCoords))))
+				dy = abs(float(np.mean(np.diff(yCoords))))
+
+				kx = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(nx, d=dx))
+				ky = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(ny, d=dy))
+
+				self.experimental_fft_mask = self.buildFFTSelectionMask(kx, ky, "Experimental")
+
+				finiteMask = np.isfinite(experimentalImage)
+
+				if np.any(finiteMask):
+					imageMean = np.mean(experimentalImage[finiteMask])
+
+					fftInput = np.nan_to_num(
+						experimentalImage - imageMean,
+						nan=0.0,
+						posinf=0.0,
+						neginf=0.0
+					)
+
+				else:
+					fftInput = np.zeros_like(experimentalImage)
+
+				self.experimental_fft_complex = np.fft.fftshift(np.fft.fft2(fftInput))
+
+				selectedExperimentalFFT = self.experimental_fft_complex * self.experimental_fft_mask
+
+				self.experimental_fft_filtered_image = np.real(
+					np.fft.ifft2(np.fft.ifftshift(selectedExperimentalFFT))
+				)
+
+				# preserve locations that were missing in the original STM image
+				self.experimental_fft_filtered_image[~finiteMask] = np.nan
 
 		return mask
 
 
 	def undoFFTSelection(self):
-		if len(self.fft_selections) == 0:
+		filterTarget = getattr(self, "filter_target", "Simulation")
+
+		if filterTarget == "Both":
+			targetNames = {"Simulation", "Experimental"}
+		else:
+			targetNames = {filterTarget}
+
+		selectionIndex = None
+
+		# search newest selections first
+		for i in range(len(self.fft_selections) - 1, -1, -1):
+			targets = self.fft_selections[i].get("targets", {"Simulation"})
+
+			if len(targets & targetNames) > 0:
+				selectionIndex = i
+				break
+
+		if selectionIndex is None:
 			return
 
-		# remove the most recent selection
-		self.fft_selections.pop()
+		selection = self.fft_selections[selectionIndex]
+		targets = selection.get("targets", {"Simulation"})
+
+		if filterTarget == "Both":
+			# remove the most recent selection from both datasets
+			self.fft_selections.pop(selectionIndex)
+
+		else:
+			# remove only the currently selected dataset from this ROI
+			targets = targets - targetNames
+
+			if len(targets) == 0:
+				self.fft_selections.pop(selectionIndex)
+
+			else:
+				selection["targets"] = targets
 
 		# update the active selection and dimension fields
 		if len(self.fft_selections) == 0:
 			self.fft_active_selection = None
 			self.fft_width_input.clear()
 			self.fft_height_input.clear()
+			self.fft_angle_input.clear()
 
 		else:
 			self.fft_active_selection = len(self.fft_selections) - 1
@@ -9550,6 +10466,7 @@ class SimulatorWidget(QWidget):
 
 		# redraw the remaining selections
 		self.drawFFTSelections()
+		self.drawExperimentalFFTSelections()
 
 		# rebuild the FFT mask
 		self.buildFFTMask()
@@ -9558,17 +10475,45 @@ class SimulatorWidget(QWidget):
 		if self.fft_filter_display != "Original":
 			self.updateFFTFilteredImage()
 
+		if len(self.fft_selections) == 0:
+			self.fft_original_btn.setChecked(True)
+
 	def clearFFTSelections(self):
-		self.fft_selections = []
+		filterTarget = getattr(self, "filter_target", "Simulation")
+
+		if filterTarget == "Both":
+			self.fft_selections = []
+
+		else:
+			targetName = filterTarget
+			remainingSelections = []
+
+			for selection in self.fft_selections:
+				targets = selection.get("targets", {"Simulation"})
+
+				if targetName in targets:
+					targets = targets - {targetName}
+
+				if len(targets) > 0:
+					selection["targets"] = targets
+					remainingSelections.append(selection)
+
+			self.fft_selections = remainingSelections
+
 		self.fft_active_selection = None
 		self.fft_width_input.clear()
 		self.fft_height_input.clear()
+		self.fft_angle_input.clear()
 
 		self.drawFFTSelections()
+		self.drawExperimentalFFTSelections()
 		self.buildFFTMask()
 
 		if self.fft_filter_display != "Original":
 			self.updateFFTFilteredImage()
+
+		if len(self.fft_selections) == 0:
+			self.fft_original_btn.setChecked(True)
 	
 
 	def updateSigma(self):
