@@ -267,8 +267,8 @@ class SimulatorWidget(QWidget):
 		self.experimental_file_path = None
 		self.comparison_mode = False
 
-		self.comparison_fft_window = "Hann"
-		self.comparison_fft_scale = "Log"
+		self.comparison_fft_window = "None"
+		self.comparison_fft_scale = "Linear"
 
 		# simulation plot colorbars
 		self.cb_r = None
@@ -866,6 +866,8 @@ class SimulatorWidget(QWidget):
 		self.comparison_fft_scale_dropdown.setEnabled(True)
 
 		if hasattr(self, "filter_target_dropdown"):
+			self.filter_target_label.show()
+			self.filter_target_dropdown.show()
 			self.filter_target_dropdown.setEnabled(True)
 
 		self.experimental_status_label.setText(
@@ -934,6 +936,8 @@ class SimulatorWidget(QWidget):
 			self.filter_target_dropdown.setCurrentText("Simulation")
 			self.filter_target_dropdown.setEnabled(False)
 			self.filter_target_dropdown.blockSignals(False)
+			self.filter_target_label.hide()
+			self.filter_target_dropdown.hide()
 
 		self.filter_target = "Simulation"
 
@@ -1319,7 +1323,7 @@ class SimulatorWidget(QWidget):
 			origin="lower",
 			aspect="equal",
 			vmin=0.0,
-			vmax=1.0
+			vmax=self.vmax_fft
 		)
 
 		self.experimental_fft_ax.set_xlabel("$k_x$ (nm⁻¹)")
@@ -9016,6 +9020,8 @@ class SimulatorWidget(QWidget):
 		self.filter_target_dropdown.setCurrentText(self.filter_target)
 
 		# simulation is the only possible target until experimental data are loaded
+		self.filter_target_label.hide()
+		self.filter_target_dropdown.hide()
 		self.filter_target_dropdown.setEnabled(False)
 
 		self.filter_target_dropdown.currentTextChanged.connect(
@@ -9117,34 +9123,68 @@ class SimulatorWidget(QWidget):
 		self.fft_precise_checkbox.setToolTip("Enable exact width, height, and angle editing for FFT selections.")
 		self.fft_precise_checkbox.toggled.connect(self.toggleFFTPreciseDimensions)
 
-		# self.fft_width_label = QLabel("Width:", self)
+		self.fft_width_label = QLabel("Width:", self)
 		self.fft_width_input = QLineEdit(self)
 		self.fft_width_input.setPlaceholderText("Width")
 		self.fft_width_input.setToolTip("Width of the FFT selection in reciprocal-space units.")
 		self.fft_width_input.returnPressed.connect(self.applyFFTPreciseDimensions)
 		self.fft_width_unit_label = QLabel("nm\u207B\u00B9", self)
 
-		# self.fft_height_label = QLabel("Height:", self)
+		self.fft_height_label = QLabel("Height:", self)
 		self.fft_height_input = QLineEdit(self)
 		self.fft_height_input.setPlaceholderText("Height")
 		self.fft_height_input.setToolTip("Height of the FFT selection in reciprocal-space units.")
 		self.fft_height_input.returnPressed.connect(self.applyFFTPreciseDimensions)
 		self.fft_height_unit_label = QLabel("nm\u207B\u00B9", self)
 
-		# self.fft_angle_label = QLabel("Angle:", self)
+		self.fft_angle_label = QLabel("Angle:", self)
 		self.fft_angle_input = QLineEdit(self)
 		self.fft_angle_input.setPlaceholderText("0")
 		self.fft_angle_input.setToolTip("Rotation angle of the FFT selection in degrees.")
 		self.fft_angle_input.returnPressed.connect(self.applyFFTPreciseDimensions)
 		self.fft_angle_unit_label = QLabel("\u00B0", self)
 
-		self.fft_width_input.setFixedWidth(60)
-		self.fft_height_input.setFixedWidth(60)
-		self.fft_angle_input.setFixedWidth(40)
+		self.fft_width_input.setFixedWidth(75)
+		self.fft_height_input.setFixedWidth(75)
+		self.fft_angle_input.setFixedWidth(60)
 
 		self.fft_apply_size_btn = QPushButton("Apply", self)
 		self.fft_apply_size_btn.setAutoDefault(False)
 		self.fft_apply_size_btn.clicked.connect(self.applyFFTPreciseDimensions)
+
+		# precise-dimension controls
+		self.fft_precise_controls_widget = QWidget(self)
+		self.fft_precise_controls_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+		fft_size_layout = QVBoxLayout(self.fft_precise_controls_widget)
+		fft_size_layout.setContentsMargins(0, 2, 0, 0)
+		fft_size_layout.setSpacing(4)
+
+		fft_size_top_layout = QHBoxLayout()
+		fft_size_top_layout.setSpacing(6)
+
+		fft_size_top_layout.addWidget(self.fft_width_label)
+		fft_size_top_layout.addWidget(self.fft_width_input)
+		fft_size_top_layout.addWidget(self.fft_width_unit_label)
+
+		fft_size_top_layout.addSpacing(8)
+
+		fft_size_top_layout.addWidget(self.fft_height_label)
+		fft_size_top_layout.addWidget(self.fft_height_input)
+		fft_size_top_layout.addWidget(self.fft_height_unit_label)
+
+		fft_size_top_layout.addSpacing(8)
+
+		fft_size_top_layout.addWidget(self.fft_angle_label)
+		fft_size_top_layout.addWidget(self.fft_angle_input)
+		fft_size_top_layout.addWidget(self.fft_angle_unit_label)
+
+		fft_size_top_layout.addStretch(1)
+		fft_size_top_layout.addWidget(self.fft_apply_size_btn)
+
+		fft_size_layout.addLayout(fft_size_top_layout)
+
+		self.fft_precise_controls_widget.setVisible(False)
 
 		# choode which version of the image to display
 		self.fft_original_btn = QRadioButton("Original")
@@ -9162,7 +9202,6 @@ class SimulatorWidget(QWidget):
 		self.fft_original_btn.toggled.connect(self.updateFFTFilterDisplay)
 		self.fft_filtered_btn.toggled.connect(self.updateFFTFilterDisplay)
 		self.fft_difference_btn.toggled.connect(self.updateFFTFilterDisplay)
-
 
 		fft_display_layout = QHBoxLayout()
 		fft_display_layout.addWidget(self.fft_original_btn)
@@ -9182,46 +9221,23 @@ class SimulatorWidget(QWidget):
 
 		# main FFT selection controls
 		fft_selection_layout = QHBoxLayout()
+		fft_selection_layout.setSpacing(6)
 
-		fft_selection_layout.addWidget(self.fft_select_btn)
-		fft_selection_layout.addWidget(self.fft_undo_btn)
-		fft_selection_layout.addWidget(self.fft_clear_btn)
+		fft_selection_layout.addWidget(self.fft_select_btn, 1)
+		fft_selection_layout.addWidget(self.fft_undo_btn, 1)
+		fft_selection_layout.addWidget(self.fft_clear_btn, 1)
 
 		# selection options
 		fft_options_layout = QHBoxLayout()
+		fft_options_layout.setSpacing(12)
 
 		fft_options_layout.addWidget(self.fft_snap_origin_checkbox)
-		fft_options_layout.addWidget(self.fft_precise_checkbox)
-
 		fft_options_layout.addStretch(1)
-
-		# precise-dimension controls
-		fft_size_layout = QHBoxLayout()
-
-		# fft_size_layout.addWidget(self.fft_width_label)
-		fft_size_layout.addWidget(self.fft_width_input)
-		fft_size_layout.addWidget(self.fft_width_unit_label)
-		# fft_size_layout.addWidget(self.fft_height_label)
-		fft_size_layout.addWidget(self.fft_height_input)
-		fft_size_layout.addWidget(self.fft_height_unit_label)
-		# fft_size_layout.addWidget(self.fft_angle_label)
-		fft_size_layout.addWidget(self.fft_angle_input)
-		fft_size_layout.addWidget(self.fft_angle_unit_label)
-		fft_size_layout.addWidget(self.fft_apply_size_btn)
-
-		# self.fft_width_label.setVisible(False)
-		self.fft_width_input.setVisible(False)
-		self.fft_width_unit_label.setVisible(False)
-		# self.fft_height_label.setVisible(False)
-		self.fft_height_input.setVisible(False)
-		self.fft_height_unit_label.setVisible(False)
-		self.fft_angle_input.setVisible(False)
-		self.fft_angle_unit_label.setVisible(False)
-		self.fft_apply_size_btn.setVisible(False)
+		fft_options_layout.addWidget(self.fft_precise_checkbox)
 
 		fft_filter_layout.addLayout(fft_selection_layout)
 		fft_filter_layout.addLayout(fft_options_layout)
-		fft_filter_layout.addLayout(fft_size_layout)
+		fft_filter_layout.addWidget(self.fft_precise_controls_widget)
 		fft_filter_layout.addLayout(fft_display_layout)
 		fft_filter_layout.setSpacing(4)
 
@@ -9310,15 +9326,26 @@ class SimulatorWidget(QWidget):
 			self.drawFFTSelections()
 
 	def toggleFFTPreciseDimensions(self, checked):
-		# self.fft_width_label.setVisible(checked)
-		self.fft_width_input.setVisible(checked)
-		self.fft_width_unit_label.setVisible(checked)
-		# self.fft_height_label.setVisible(checked)
-		self.fft_height_input.setVisible(checked)
-		self.fft_height_unit_label.setVisible(checked)
-		self.fft_angle_input.setVisible(checked)
-		self.fft_angle_unit_label.setVisible(checked)
-		self.fft_apply_size_btn.setVisible(checked)
+		self.fft_precise_controls_widget.setVisible(checked)
+
+		# let the 2D FFT tab grow enough to show all of its controls
+		self.fft_filter_tab.layout().activate()
+
+		if checked:
+			contentHeight = self.fft_filter_tab.layout().sizeHint().height()
+			tabBarHeight = self.filter_tabs.tabBar().sizeHint().height()
+
+			self.filter_tabs.setMinimumHeight(
+				contentHeight + tabBarHeight + 8
+			)
+		else:
+			self.filter_tabs.setMinimumHeight(0)
+
+		# let the analysis tools area recalculate its height after this section opens/closes
+		parent = self.parent()
+
+		if parent is not None and hasattr(parent, "updateTopControlsTabHeight"):
+			QTimer.singleShot(0, parent.updateTopControlsTabHeight)
 
 		if checked and self.fft_active_selection is not None:
 			if self.fft_active_selection < len(self.fft_selections):
