@@ -7,6 +7,9 @@ Created on Sep 23 2026
 
 Modification Log
 ----------------
+2026-10-01 - Jacob Gonzalez
+    - Added NumPy compatibility workaround for xarray-nanonis SXM loading
+
 2026-09-23 - Jacob Gonzalez
     - Added experimental STM data support
     - Added Nanonis SXM loading through xarray-nanonis
@@ -18,6 +21,12 @@ Modification Log
 import os
 
 import numpy as np
+
+# compatibility fix for xarray-nanonis:
+# xarray-nanonis still uses the deprecated np.long alias which seems to be unavailable in modern numpy versions
+if "long" not in np.__dict__:
+    np.long = np.int_
+
 import xarray as xr
 
 class ExperimentalData:
