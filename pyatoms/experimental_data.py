@@ -8,6 +8,9 @@ Created on Sep 23 2026
 Modification Log
 ----------------
 2026-10-01 - Jacob Gonzalez
+    - Added Gwyddion GWY experimental data support
+    - Added file-content detection so GWY files with an .sxm extension
+      are still loaded correctly
     - Added NumPy compatibility workaround for xarray-nanonis SXM loading
 
 2026-09-23 - Jacob Gonzalez
@@ -19,6 +22,7 @@ Modification Log
 """
 
 import os
+import re
 
 import numpy as np
 
@@ -28,16 +32,23 @@ if "long" not in np.__dict__:
     np.long = np.int_
 
 import xarray as xr
+import gwyfile
 
 class ExperimentalData:
     def __init__(self, file_path):
         self.file_path = file_path
         self.file_name = os.path.basename(file_path)
 
-        self.dataset = xr.open_dataset(file_path, engine="nanonis")
+        self.dataset = None
+        self.file_format = None
 
-        self.channels = list(self.dataset.data_vars)
-        self.directions = [str(value) for value in self.dataset["dir"].values]
+        # gwyddion specific storage
+        self._gwy_container = None
+        self._gwy_fields = {}
+        self._gwy_field_ids = {}
+
+        self.channels = []
+        self.directions = []
 
         self.channel = None
         self.direction = None
@@ -48,10 +59,38 @@ class ExperimentalData:
         self.leveling = "None"
         self.line_flattening = "None"
 
-        self.x_nm = np.asarray(self.dataset["x"].values, dtype=float) * 1e9
-        self.y_nm = np.asarray(self.dataset["y"].values, dtype=float) * 1e9
+        self.metadata = {}
 
-        # pyatoms uses coordinates centered around (0, 0)
+        # detect by actual file contents instead of trusting the extension
+        if self._is_gwyddion_file():
+            self.file_format = "gwyddion"
+            self._load_gwyddion()
+        else:
+            self.file_format = "nanonis"
+            self._load_nanonis()
+
+    def _is_gwyddion_file(self):
+        """
+        detects a gwyddion native GWY file from its magic header
+
+        this is based on the file contents instead of the extension
+        because a gwyddion file may still have its original .sxm filename
+        """
+
+        with open(self.file_path, "rb") as file:
+            magic = file.read(4)
+
+        return magic == b"GWYP"
+
+    def _set_coordinates(self, x_m, y_m):
+        """
+        store lateral coordinates in the centered nanometer convention that
+        is used in pyatoms
+        """
+
+        self.x_nm = np.asarray(x_m, dtype=float) * 1e9
+        self.y_nm = np.asarray(y_m, dtype=float) * 1e9
+
         self.x_center_nm = (np.min(self.x_nm) + np.max(self.x_nm)) / 2
         self.y_center_nm = (np.min(self.y_nm) + np.max(self.y_nm)) / 2
 
@@ -64,7 +103,149 @@ class ExperimentalData:
         self.x_range_nm = float(np.max(self.x_display_nm) - np.min(self.x_display_nm))
         self.y_range_nm = float(np.max(self.y_display_nm) - np.min(self.y_display_nm))
 
+    def _load_nanonis(self):
+        """
+        load a normal nanonis SXM file through xarray-nanonis
+        """
+
+        if not self.file_path.lower().endswith(".sxm"):
+            raise ValueError(
+                "The selected file is neither a Gwyddion GWY file "
+                "nor a Nanonis .sxm file."
+            )
+
+        self.dataset = xr.open_dataset(self.file_path, engine="nanonis")
+
+        self.channels = list(self.dataset.data_vars)
+
+        self.directions = [str(value) for value in self.dataset["dir"].values]
+
+        self._set_coordinates(self.dataset["x"].values, self.dataset["y"].values)
+
         self.metadata = dict(self.dataset.attrs)
+
+    def _load_gwyddion(self):
+        """
+        load 2D gwyddion image fields
+
+        gwyddion titles such as:
+        
+        Z (Forward)
+        Z (Backward)
+        Current (Forward)
+        Current (Backward)
+
+        are converted into the same channel/direction interfact that pyatoms
+        already uses for Nanonis data
+        """
+
+        self._gwy_container = gwyfile.load(self.file_path)
+
+        channels = []
+        directions = []
+
+        direction_pattern = re.compile(r"^(.*?)\s*\((forward|backward)\)\s*$", re.IGNORECASE)
+
+        for field_index, title in gwyfile.util.find_datafields(self._gwy_container):
+            title = str(title)
+
+            match = direction_pattern.match(title)
+
+            if match:
+                channel = match.group(1).strip()
+                direction = match.group(2).lower()
+
+            else:
+                # if the gwyddion title does not specify a scan direction then treat it as a forward image
+                channel = title.strip()
+                direction = "forward"
+
+            key = (channel, direction)
+
+            # if two data fields produce the same channel/direction pair then preserve the second one under its full title
+            if key in self._gwy_fields:
+                channel = title.strip()
+                key = (channel, direction)
+
+            field = self._gwy_container[f"/{field_index}/data"]
+
+            self._gwy_fields[key] = field
+            self._gwy_field_ids[key] = field_index
+
+            if channel not in channels:
+                channels.append(channel)
+
+            if direction not in directions:
+                directions.append(direction)
+
+        if len(self._gwy_fields) == 0:
+            raise ValueError("No 2D image channels were found in the Gwyddion file.")
+
+
+        self.channels = channels
+
+        # keep the familiar order in the gui
+        self.directions = [direction for direction in ("forward", "backward") if direction in directions]
+
+        self.directions.extend(direction for direction in directions if direction not in self.directions)
+
+        # use the first image to initialize image dimensions
+        first_field = next(iter(self._gwy_fields.values()))
+
+        self._set_gwyddion_coordinates(first_field)
+
+        self.metadata = {
+            "format": "Gwyddion GWY",
+            "source_file": self._gwy_container.get("/filename", self.file_name)
+        }
+
+
+    def _set_gwyddion_coordinates(self, field):
+        """
+        convert gwyddion lateral dimensions to meters and then pass them
+        through the normal pyatoms coordinate handling
+        """
+
+        data = np.asarray(field.data)
+
+        if data.ndim != 2:
+            raise ValueError("The selected Gwyddion channel is not two-dimensional.")
+
+        ny, nx = data.shape
+
+        if field.xreal is None or field.yreal is None:
+            raise ValueError("The Gwyddion channel does not contain physical scan dimensions.")
+
+        unit = ""
+
+        if field.si_unit_xy is not None:
+            unit = str(field.si_unit_xy.unitstr)
+
+        unit_scale = {
+            "": 1.0,
+            "m": 1.0,
+            "nm": 1e-9,
+            "um": 1e-6,
+            "µm": 1e-6,
+            "pm": 1e-12,
+            "Å": 1e-10,
+        }
+
+        if unit not in unit_scale:
+            raise ValueError(f"Unsupported Gwyddion lateral unit '{unit}'.")
+
+        scale = unit_scale[unit]
+
+        x_real_m = float(field.xreal) * scale
+        y_real_m = float(field.yreal) * scale
+
+        x_offset_m = float(field.xoff) * scale
+        y_offset_m = float(field.yoff) * scale
+
+        x_m = np.linspace(x_offset_m, x_offset_m + x_real_m, nx)
+        y_m = np.linspace(y_offset_m, y_offset_m + y_real_m, ny)
+
+        self._set_coordinates(x_m, y_m)
 
 
     def load_channel(self, channel="Z", direction="forward"):
@@ -74,13 +255,49 @@ class ExperimentalData:
         if direction not in self.directions:
             raise ValueError(f"Direction '{direction}' not found in dataset. Available directions: {self.directions}")
 
-        data = self.dataset[channel].sel(dir=direction)
+
+        if self.file_format == "gwyddion":
+            key = (channel, direction)
+
+            if key not in self._gwy_fields:
+                available_directions = [current_direction for current_channel, current_direction in self._gwy_fields if current_channel == channel]
+                raise ValueError(
+                    f"Direction '{direction}' is not available "
+                    f"for channel '{channel}'. "
+                    f"Available directions: {available_directions}"
+                )
+
+            field = self._gwy_fields[key]
+
+            # gwyddion stores image rows from top to bottom
+            # BUT pyatoms plots experimental images using origin = "lower" so we have to flip vertically
+            data = np.flipud(np.asarray(field.data, dtype=float))
+
+            self._set_gwyddion_coordinates(field)
+
+            field_index = self._gwy_field_ids[key]
+
+            self.metadata = {
+                "format": "Gwyddion GWY",
+                "source_file": self._gwy_container.get("/filename", self.file_name),
+                "channel_title": self._gwy_container.get(f"/{field_index}/data/title", channel),
+            }
+
+            field_metadata = self._gwy_container.get(f"/{field_index}/meta")
+
+            if field_metadata is not None:
+                self.metadata.update(dict(field_metadata))
+
+        else:
+            data = self.dataset[channel].sel(dir=direction)
+
+            data = np.asarray(data.values, dtype=float)
 
         self.channel = channel
         self.direction = direction
 
         # load raw data
-        self.raw = np.asarray(data.values, dtype=float).copy()
+        self.raw = np.asarray(data, dtype=float).copy()
 
         # start from the unprocessed channel data
         self.processed = self.raw.copy()

@@ -517,8 +517,8 @@ class Window(QMainWindow):
             event.ignore()
             return
 
-        # prefer an SXM if several files were dropped
-        filePath = next((path for path in filePaths if path.lower().endswith(".sxm")), filePaths[0])
+        # prefer a supported STM data file if several files were dropped
+        filePath = next((path for path in filePaths if path.lower().endswith((".sxm", ".gwy"))), filePaths[0])
 
         loaded = self.SimWidget.loadExperimentalFile(filePath)
 

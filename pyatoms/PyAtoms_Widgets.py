@@ -670,12 +670,12 @@ class SimulatorWidget(QWidget):
 		layout.setSpacing(6)
 
 		description = QLabel(
-			"Import a Nanonis SXM file for comparison with the simulated lattice. "
-			"You can also drag and drop an SXM file anywhere onto the PyAtoms window."
+			    "Import a Nanonis SXM or Gwyddion GWY file for comparison with the simulated lattice. "
+    			"You can also drag and drop a supported STM file anywhere onto the PyAtoms window."
 		)
 		description.setWordWrap(True)
 
-		self.experimental_import_btn = QPushButton("Import SXM file", self)
+		self.experimental_import_btn = QPushButton("Import STM file", self)
 		self.experimental_import_btn.setAutoDefault(False)
 		self.experimental_import_btn.clicked.connect(self.chooseExperimentalFile)
 
@@ -787,7 +787,9 @@ class SimulatorWidget(QWidget):
 			self,
 			"Import experimental STM data",
 			os.getcwd(),
-			"Nanonis SXM files (*.sxm)"
+			"STM data files (*.sxm *.gwy);;"
+			"Nanonis SXM files (*.sxm);;"
+			"Gwyddion files (*.gwy)"
 		)
 
 		if filePath == "":
@@ -799,11 +801,11 @@ class SimulatorWidget(QWidget):
 		if not filePath:
 			return False
 
-		if not filePath.lower().endswith(".sxm"):
+		if not filePath.lower().endswith((".sxm", ".gwy")):
 			QMessageBox.warning(
 				self,
 				"Unsupported file",
-				"PyAtoms currently supports Nanonis .sxm files for experimental data."
+				"PyAtoms currently supports Nanonis .sxm and Gwyddion .gwy files for experimental data."
 			)
 			return False
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyatoms-spm"
-version = "2.1.1"
+version = "2.1.2"
 description = "A graphical simulator for scanning probe microscopy images and atomic lattices."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,8 +19,9 @@ dependencies = [
     "matplotlib",
     "QtPy",
     "PyQt6",
-    "xarray",
-    "xarray-nanonis"
+    "xarray>=2024.6.0",
+    "xarray-nanonis",
+    "gwyfile>=0.3.0"
 ]
 
 [project.urls]

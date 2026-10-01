@@ -18,6 +18,7 @@ Simulates scanning probe microscopy (SPM) images. Please read our preprint descr
 - PyQt5 or PyQt6
 - xarray
 - xarray-nanonis
+- gwyfile
 
 PyAtoms is compatible with both PyQt5 and PyQt6 through QtPy. PyQt6 is installed by default when PyAtoms is installed using pip.
 
@@ -78,13 +79,13 @@ PyAtoms can also be run directly from the source code.
     For PyQt6:
 
     ```bash
-    python -m pip install numpy scipy matplotlib QtPy PyQt6 xarray xarray-nanonis
+    python -m pip install numpy scipy matplotlib QtPy PyQt6 xarray xarray-nanonis gwyfile
     ```
 
     Or, if you use PyQt5:
 
     ```bash
-    python -m pip install numpy scipy matplotlib QtPy PyQt5 xarray xarray-nanonis
+    python -m pip install numpy scipy matplotlib QtPy PyQt5 xarray xarray-nanonis gwyfile
     ```
 
 6. From inside the extracted PyAtoms folder, start PyAtoms with:
